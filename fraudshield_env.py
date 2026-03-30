@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List
 
-from data_loader import KaggleDataLoader
+from data_loader import FraudDataLoader
 from models import (
     DecisionEnum,
     EpisodeState,
@@ -25,7 +25,7 @@ class FraudShieldEnvironment:
 
     def __init__(self, data_path: str = "data", seed: int = 42):
         self.seed = seed
-        self.data_loader = KaggleDataLoader(data_path=data_path, seed=seed)
+        self.data_loader = FraudDataLoader(data_path=data_path, seed=seed)
         self.data_loaded = False
 
         self.episode_id = ""
@@ -47,16 +47,21 @@ class FraudShieldEnvironment:
             TaskDifficulty.HARD: 48,
         }
 
-    def load_kaggle_data(self) -> bool:
-        """Load the bundled cases or build them from the local CSV."""
+    def load_data(self) -> bool:
+        """Load the committed snapshot or rebuild it from the local public source CSV."""
 
         self.data_loaded = self.data_loader.load_data()
         return self.data_loaded
 
+    def load_kaggle_data(self) -> bool:
+        """Backward-compatible wrapper for the previous method name."""
+
+        return self.load_data()
+
     def ensure_data_loaded(self) -> None:
         """Load data on demand so server startup can stay simple."""
 
-        if not self.data_loaded and not self.load_kaggle_data():
+        if not self.data_loaded and not self.load_data():
             raise RuntimeError("FraudShield data bundle could not be loaded.")
 
     def reset(self, task: str = "easy") -> ResetResult:
@@ -83,6 +88,7 @@ class FraudShieldEnvironment:
             "episode_id": self.episode_id,
             "task": task,
             "task_focus": observation.historical_context.get("task_focus") if observation.historical_context else None,
+            "data_snapshot": self.data_loader.get_bundle_summary(),
             "max_steps": self.max_steps[self.current_task],
             "num_transactions": len(self.current_cases),
             "fraud_count": sum(1 for label in self.ground_truth_labels if label == "fraud"),

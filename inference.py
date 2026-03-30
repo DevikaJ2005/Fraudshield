@@ -67,7 +67,7 @@ def main() -> Dict[str, object]:
     logger.info("%s", "=" * 72)
 
     env = FraudShieldEnvironment(data_path="data", seed=42)
-    if not env.load_kaggle_data():
+    if not env.load_data():
         logger.error("FraudShield data could not be loaded from ./data")
         sys.exit(1)
 
@@ -99,6 +99,7 @@ def main() -> Dict[str, object]:
         "api_base_url": os.getenv("API_BASE_URL", "https://router.huggingface.co/v1"),
         "model_name": os.getenv("MODEL_NAME", ""),
         "seed": 42,
+        "data_snapshot": env.data_loader.get_bundle_summary(),
         "tasks": {
             "easy": len(easy_ground_truth),
             "medium": len(medium_ground_truth),

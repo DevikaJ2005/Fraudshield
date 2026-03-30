@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fraudshield"
 version = "0.2.0"
-description = "OpenEnv fraud review environment built from curated Kaggle transactions"
+description = "OpenEnv fraud review environment built from a frozen public-data snapshot"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

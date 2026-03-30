@@ -1,19 +1,40 @@
 # FraudShield
 
-FraudShield is an OpenEnv environment for marketplace fraud review. An agent receives one e-commerce transaction at a time, decides whether it is `fraud` or `legitimate`, and gets dense reward shaped by business impact, confidence calibration, and correctness.
+FraudShield is an OpenEnv environment for marketplace fraud review. An agent inspects one transaction at a time, predicts whether it is `fraud` or `legitimate`, and receives dense reward shaped by business impact, confidence calibration, and correctness.
 
-The environment is built from a compact task bundle derived from the Kaggle credit card fraud dataset. The bundle is committed as `data/fraudshield_cases.json`, so the repo stays self-contained for Docker and Hugging Face Spaces while still grounding the tasks in real fraud data.
+The environment is grounded in real public fraud data, but it does not fetch live records during `reset()` or `step()`. Instead, it uses a frozen, versioned snapshot stored in `data/fraudshield_cases.json`. That gives you real-world grounding with deterministic grading, fast Docker startup, and reproducible evaluation on Hugging Face Spaces.
 
-## Why this environment
+## Why this design
 
-Real commerce teams review risky orders all day: new sellers, chargeback-heavy merchants, reused devices, flash-sale spikes, and account-takeover style behavior. FraudShield turns that workflow into an agent training environment with:
+For an OpenEnv submission, the safest pattern is:
 
-- A real-world domain instead of a toy game
-- Typed `Action`, `Observation`, and `Reward` models
-- `reset()`, `step()`, and `state()` APIs
-- Three graded tasks with deterministic scoring from `0.0` to `1.0`
-- Dense step rewards with partial progress signals
-- A root `inference.py` baseline compatible with the required OpenAI client flow
+- Fetch or refresh public source data offline
+- Build a deterministic FraudShield snapshot
+- Commit the snapshot used for evaluation
+- Keep the environment runtime fully offline
+
+That avoids runtime API failures, privacy issues, and non-reproducible scores.
+
+## Real-world data strategy
+
+FraudShield currently builds its snapshot from the public Kaggle / ULB credit card fraud dataset:
+
+- Source ID: `kaggle_creditcardfraud`
+- Dataset: `mlg-ulb/creditcardfraud`
+- URL: `https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud`
+
+The loader is now source-agnostic in code:
+
+- `data_loader.py` exposes a public-source snapshot pipeline
+- `download_kaggle_data.py` refreshes the local source CSV and rebuilds the frozen snapshot
+- `fraudshield_env.py` reads the snapshot only at runtime
+
+The checked-in snapshot currently reports:
+
+- Snapshot ID: `fraudshield-realworld-v2`
+- Schema version: `2.0`
+- Seed: `42`
+- Task sizes: easy `24`, medium `36`, hard `48`
 
 ## Tasks
 
@@ -23,11 +44,9 @@ Real commerce teams review risky orders all day: new sellers, chargeback-heavy m
 | Medium | 36 | Balance fraud capture with calibration | No single signal is decisive; tradeoffs matter |
 | Hard | 48 | Handle coordinated abuse and edge-case legitimate traffic | Fraud rings and flash-sale behavior intentionally overlap |
 
-Each task uses a deterministic grader in [graders.py](/c:/Users/Jayashanker/Downloads/fraudshield_kaggle_ready/fraudshield_kaggle/graders.py).
-
 ## Action space
 
-Agents emit a single [FraudCheckAction](/c:/Users/Jayashanker/Downloads/fraudshield_kaggle_ready/fraudshield_kaggle/models.py):
+Agents emit a single `FraudCheckAction`:
 
 ```python
 FraudCheckAction(
@@ -40,15 +59,15 @@ FraudCheckAction(
 
 ## Observation space
 
-Each step returns a [FraudCheckObservation](/c:/Users/Jayashanker/Downloads/fraudshield_kaggle_ready/fraudshield_kaggle/models.py) with structured transaction facts and rolling context:
+Each step returns a `FraudCheckObservation` with:
 
-- Transaction facts: amount, seller age, buyer age, payment method, geo mismatch, rating, prior flags, chargeback rate, shared-device counts, same-address velocity, and more
-- Historical context: seller velocity, linked cards, refund counts, cluster alert score, and task-specific notes
-- Task metadata: difficulty and episode step
+- Structured transaction facts such as amount, seller age, buyer age, geo mismatch, rating, prior flags, chargeback rate, shared-device counts, and address velocity
+- Historical context such as seller velocity, linked cards, refund counts, cluster alert score, and source snapshot metadata
+- Task metadata including difficulty and episode step
 
 ## Reward design
 
-Rewards are dense and cost-sensitive in [fraudshield_env.py](/c:/Users/Jayashanker/Downloads/fraudshield_kaggle_ready/fraudshield_kaggle/fraudshield_env.py):
+Rewards in `fraudshield_env.py` are dense and cost-sensitive:
 
 - Correct fraud catches receive the strongest positive reward
 - Correct legitimate approvals still earn positive reward, but less than catching fraud
@@ -56,11 +75,9 @@ Rewards are dense and cost-sensitive in [fraudshield_env.py](/c:/Users/Jayashank
 - Confidence is rewarded when it matches hidden case difficulty and punished when it is overconfident
 - Submitting the wrong `transaction_id` adds an extra penalty
 
-This gives the agent signal across the full trajectory instead of only at episode end.
-
 ## Graders
 
-The three task graders are deterministic and return `0.0` to `1.0`.
+The three task graders in `graders.py` are deterministic and return scores from `0.0` to `1.0`.
 
 - Easy: accuracy, F1, recall, and specificity
 - Medium: F1, ROC-AUC, precision, and confidence calibration
@@ -68,10 +85,10 @@ The three task graders are deterministic and return `0.0` to `1.0`.
 
 ## Baseline inference
 
-The required root script is [inference.py](/c:/Users/Jayashanker/Downloads/fraudshield_kaggle_ready/fraudshield_kaggle/inference.py).
+The required root script is `inference.py`.
 
 - Competition mode: if `API_BASE_URL`, `MODEL_NAME`, and `HF_TOKEN` are set, it uses the OpenAI client against that endpoint
-- Local smoke-test mode: if those variables are missing, it falls back to a deterministic heuristic agent so the repo can still be verified offline
+- Local smoke-test mode: if those variables are missing, it falls back to a deterministic heuristic agent
 
 Required environment variables for the competition path:
 
@@ -87,11 +104,11 @@ Run it with:
 python inference.py
 ```
 
-The script writes `fraudshield_baseline_results.json` in the project root.
+The script writes `fraudshield_baseline_results.json` to the project root.
 
-### Local offline baseline
+### Tested local baseline
 
-With the deterministic heuristic fallback and seed `42`, the current local smoke-test scores are:
+I reran the baseline after the snapshot-loader changes. With the deterministic heuristic fallback and seed `42`, the tested local scores are:
 
 | Task | Score |
 | --- | ---: |
@@ -103,23 +120,23 @@ With the deterministic heuristic fallback and seed `42`, the current local smoke
 ## Project layout
 
 ```text
-fraudshield_kaggle/
-├── data/
-│   └── fraudshield_cases.json
-├── server/
-│   ├── __init__.py
-│   └── app.py
-├── data_loader.py
-├── download_kaggle_data.py
-├── Dockerfile
-├── fraudshield_env.py
-├── graders.py
-├── inference.py
-├── inference_llm.py
-├── llm_agent.py
-├── models.py
-├── openenv.yaml
-└── pyproject.toml
+fraudshield/
+|-- data/
+|   |-- fraudshield_cases.json
+|-- server/
+|   |-- __init__.py
+|   `-- app.py
+|-- data_loader.py
+|-- download_kaggle_data.py
+|-- Dockerfile
+|-- fraudshield_env.py
+|-- graders.py
+|-- inference.py
+|-- inference_llm.py
+|-- llm_agent.py
+|-- models.py
+|-- openenv.yaml
+`-- pyproject.toml
 ```
 
 ## Setup
@@ -130,14 +147,16 @@ Install the project:
 python -m pip install -e .
 ```
 
-Optional: if you want to regenerate the compact bundle from the original Kaggle CSV instead of using the committed task file:
+If you want to rebuild the frozen snapshot from the public source CSV:
 
 ```bash
 python -m pip install -e ".[data]"
 python download_kaggle_data.py
 ```
 
-## Running the environment locally
+If `data/creditcard.csv` already exists locally, the script rebuilds the snapshot without needing to download again.
+
+## Running locally
 
 ### Python API
 
@@ -146,7 +165,7 @@ from fraudshield_env import FraudShieldEnvironment
 from models import DecisionEnum, FraudCheckAction
 
 env = FraudShieldEnvironment(data_path="data", seed=42)
-env.load_kaggle_data()
+env.load_data()
 reset_result = env.reset("medium")
 
 action = FraudCheckAction(
@@ -184,16 +203,7 @@ docker build -t fraudshield .
 docker run -p 7860:7860 fraudshield
 ```
 
-The container listens on port `7860`, which is the expected default for Hugging Face Docker Spaces.
-
-## Hugging Face Spaces
-
-This repo is ready for a Docker Space:
-
-- Include `openenv` in the Space tags
-- Use the provided `Dockerfile`
-- Expose the app on port `7860`
-- Set `API_BASE_URL`, `MODEL_NAME`, and `HF_TOKEN` in the Space secrets if you want the LLM baseline to run there
+The container listens on port `7860`, which matches Hugging Face Docker Spaces expectations.
 
 ## Validation checklist
 
@@ -213,6 +223,6 @@ Then verify:
 
 ## Notes
 
-- The committed task bundle is small on purpose so the repo stays deployable without external downloads
-- The source CSV is optional and only needed if you want to regenerate the bundle
-- `inference_llm.py` is kept as a backward-compatible wrapper to the main baseline entrypoint
+- Runtime uses the committed snapshot only
+- Public source refresh is optional and intended for offline rebuilds
+- `inference_llm.py` remains as a thin wrapper to `inference.py`

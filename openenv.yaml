@@ -1,6 +1,6 @@
 name: fraudshield
 version: 0.2.0
-description: OpenEnv environment for marketplace fraud review built from curated Kaggle transactions.
+description: OpenEnv environment for marketplace fraud review built from a frozen public-data snapshot.
 author: Devika J
 
 environment:

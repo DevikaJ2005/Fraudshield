@@ -1,11 +1,11 @@
-"""Deterministic FraudShield task bundle loader."""
+"""Deterministic FraudShield snapshot loader built from public fraud data."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -13,6 +13,19 @@ import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+PRIMARY_SOURCE_ID = "kaggle_creditcardfraud"
+BUNDLE_SCHEMA_VERSION = "2.0"
+
+PUBLIC_SOURCE_CATALOG: Dict[str, Dict[str, str]] = {
+    PRIMARY_SOURCE_ID: {
+        "provider": "Kaggle / ULB",
+        "dataset_id": "mlg-ulb/creditcardfraud",
+        "title": "Credit Card Fraud Detection",
+        "source_url": "https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud",
+        "license_note": "Refer to the dataset page for license and usage terms.",
+    }
+}
 
 TASK_SPECS: Dict[str, Dict[str, Any]] = {
     "easy": {
@@ -36,8 +49,8 @@ TASK_SPECS: Dict[str, Dict[str, Any]] = {
 }
 
 
-class KaggleDataLoader:
-    """Loads the curated FraudShield task bundle or builds it from Kaggle data."""
+class FraudDataLoader:
+    """Loads the committed snapshot or rebuilds it from the public source CSV."""
 
     def __init__(self, data_path: str = "data", seed: int = 42):
         self.seed = seed
@@ -47,54 +60,98 @@ class KaggleDataLoader:
         self.bundle_file = self.data_path / "fraudshield_cases.json"
         self.df: pd.DataFrame | None = None
         self.task_bundle: Dict[str, List[Dict[str, Any]]] = {}
+        self.bundle_metadata: Dict[str, Any] = {}
+        self.source_catalog = PUBLIC_SOURCE_CATALOG.copy()
 
-    def download_data(self) -> bool:
-        """Download the source Kaggle dataset for bundle regeneration."""
+    def download_source_data(self, source_id: str = PRIMARY_SOURCE_ID) -> bool:
+        """Download the public source dataset used to build the local snapshot."""
+
+        if source_id != PRIMARY_SOURCE_ID:
+            raise ValueError(f"Unsupported source_id: {source_id}")
 
         try:
             import kaggle
 
-            logger.info("Downloading Kaggle Credit Card Fraud dataset...")
+            logger.info("Downloading public source dataset %s...", source_id)
             kaggle.api.dataset_download_files(
-                "mlg-ulb/creditcardfraud",
+                self.source_catalog[source_id]["dataset_id"],
                 path=str(self.data_path),
                 unzip=True,
             )
             logger.info("Downloaded source data to %s", self.data_path)
             return True
         except Exception as exc:  # pragma: no cover - external dependency
-            logger.error("Failed to download Kaggle data: %s", exc)
+            logger.error("Failed to download source data: %s", exc)
             return False
 
-    def load_data(self) -> bool:
-        """Load the compact task bundle, building it from CSV if needed."""
+    def download_data(self) -> bool:
+        """Backward-compatible wrapper for the old method name."""
+
+        return self.download_source_data()
+
+    def load_bundle(self) -> bool:
+        """Load the compact snapshot, or build it from the local source CSV."""
 
         if self.bundle_file.exists():
-            self.task_bundle = json.loads(self.bundle_file.read_text(encoding="utf-8"))["tasks"]
-            logger.info("Loaded curated task bundle from %s", self.bundle_file)
+            payload = json.loads(self.bundle_file.read_text(encoding="utf-8"))
+            self.task_bundle = payload["tasks"]
+            self.bundle_metadata = self._normalize_bundle_metadata(payload)
+            logger.info(
+                "Loaded FraudShield snapshot %s from %s",
+                self.bundle_metadata.get("snapshot_id", "unknown"),
+                self.bundle_file,
+            )
             return True
 
         if not self.csv_file.exists():
             logger.error("Neither %s nor %s is available.", self.bundle_file, self.csv_file)
             return False
 
-        logger.info("Building curated task bundle from %s", self.csv_file)
+        logger.info("Building FraudShield snapshot from %s", self.csv_file)
         self.df = pd.read_csv(self.csv_file)
         self.task_bundle = self._build_task_bundle()
-        payload = {
-            "seed": self.seed,
-            "source": "Kaggle creditcardfraud",
-            "tasks": self.task_bundle,
-        }
+        payload = self._build_bundle_payload()
+        self.bundle_metadata = payload["metadata"]
         self.bundle_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        logger.info("Wrote deterministic task bundle to %s", self.bundle_file)
+        logger.info("Wrote deterministic FraudShield snapshot to %s", self.bundle_file)
         return True
+
+    def load_data(self) -> bool:
+        """Backward-compatible wrapper for the old method name."""
+
+        return self.load_bundle()
+
+    def get_bundle_summary(self) -> Dict[str, Any]:
+        """Return source and snapshot metadata for docs, APIs, and evals."""
+
+        if not self.bundle_metadata:
+            return {}
+
+        sources = self.bundle_metadata.get("sources", [])
+        return {
+            "snapshot_id": self.bundle_metadata.get("snapshot_id"),
+            "schema_version": self.bundle_metadata.get("schema_version"),
+            "generated_at": self.bundle_metadata.get("generated_at"),
+            "seed": self.bundle_metadata.get("seed", self.seed),
+            "source_count": len(sources),
+            "sources": [
+                {
+                    "source_id": source.get("source_id"),
+                    "provider": source.get("provider"),
+                    "title": source.get("title"),
+                    "dataset_id": source.get("dataset_id"),
+                    "source_url": source.get("source_url"),
+                }
+                for source in sources
+            ],
+            "task_sizes": {task_name: len(cases) for task_name, cases in self.task_bundle.items()},
+        }
 
     def get_task_cases(self, task: str) -> List[Dict[str, Any]]:
         """Return the full case records for a given task."""
 
         if not self.task_bundle:
-            raise RuntimeError("Data not loaded. Call load_data() first.")
+            raise RuntimeError("Data not loaded. Call load_bundle() first.")
         if task not in self.task_bundle:
             raise ValueError(f"Unknown task: {task}")
         return list(self.task_bundle[task])
@@ -116,8 +173,59 @@ class KaggleDataLoader:
             [case["label"] for case in hard_cases],
         )
 
+    def _normalize_bundle_metadata(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Support both the original bundle shape and the new metadata-rich one."""
+
+        metadata = payload.get("metadata")
+        if metadata:
+            return metadata
+
+        source_name = payload.get("source", "Public fraud source")
+        return {
+            "snapshot_id": "fraudshield-realworld-v1",
+            "schema_version": "1.0",
+            "generated_at": None,
+            "seed": payload.get("seed", self.seed),
+            "sources": [
+                {
+                    "source_id": PRIMARY_SOURCE_ID,
+                    "provider": self.source_catalog[PRIMARY_SOURCE_ID]["provider"],
+                    "title": source_name,
+                    "dataset_id": self.source_catalog[PRIMARY_SOURCE_ID]["dataset_id"],
+                    "source_url": self.source_catalog[PRIMARY_SOURCE_ID]["source_url"],
+                }
+            ],
+        }
+
+    def _build_bundle_payload(self) -> Dict[str, Any]:
+        """Build the full snapshot payload written to disk."""
+
+        sources = [
+            {
+                "source_id": source_id,
+                **details,
+            }
+            for source_id, details in self.source_catalog.items()
+            if source_id == PRIMARY_SOURCE_ID
+        ]
+        metadata = {
+            "snapshot_id": "fraudshield-realworld-v2",
+            "schema_version": BUNDLE_SCHEMA_VERSION,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "seed": self.seed,
+            "build_notes": (
+                "Runtime uses this frozen snapshot only. Public source downloads are optional and "
+                "intended for rebuilding the snapshot offline."
+            ),
+            "sources": sources,
+        }
+        return {
+            "metadata": metadata,
+            "tasks": self.task_bundle,
+        }
+
     def _build_task_bundle(self) -> Dict[str, List[Dict[str, Any]]]:
-        """Create deterministic tasks from the Kaggle dataset."""
+        """Create deterministic tasks from the public source dataset."""
 
         if self.df is None:
             raise RuntimeError("Source dataframe is not loaded.")
@@ -199,7 +307,7 @@ class KaggleDataLoader:
         label: str,
         local_index: int,
     ) -> Dict[str, Any]:
-        """Convert a Kaggle row into one deterministic marketplace case."""
+        """Convert a source row into one deterministic marketplace case."""
 
         row_id = int(row["row_id"])
         anomaly_strength = float(row["case_score"])
@@ -256,7 +364,7 @@ class KaggleDataLoader:
         )
 
         business_cost = self._business_cost(task_name, label, anomaly_strength)
-        case = {
+        return {
             "transaction_id": f"{task_name}_{label}_{row_id}",
             "label": label,
             "risk_score": round(base_risk, 4),
@@ -264,7 +372,6 @@ class KaggleDataLoader:
             "transaction_data": transaction_data,
             "historical_context": historical_context,
         }
-        return case
 
     @staticmethod
     def _timestamp_from_seconds(raw_seconds: float) -> str:
@@ -529,10 +636,20 @@ class KaggleDataLoader:
         fraud_ring_group: int | None,
         flash_sale_group: int | None,
     ) -> Dict[str, Any]:
-        seller_velocity = self._stable_int(1, 18 if task_name != "hard" else 35, "seller-velocity", task_name, label, row_id)
+        seller_velocity = self._stable_int(
+            1,
+            18 if task_name != "hard" else 35,
+            "seller-velocity",
+            task_name,
+            label,
+            row_id,
+        )
         linked_cards = self._stable_int(1, 4 if task_name == "easy" else 8, "linked-cards", task_name, label, row_id)
         recent_refunds = self._stable_int(0, 2 if task_name == "easy" else 6, "refunds", task_name, label, row_id)
-        cluster_alert = round(self._clamp(0.20 + anomaly_strength * 0.55 + (0.10 if fraud_ring_group is not None else 0.0)), 3)
+        cluster_alert = round(
+            self._clamp(0.20 + anomaly_strength * 0.55 + (0.10 if fraud_ring_group is not None else 0.0)),
+            3,
+        )
 
         note = TASK_SPECS[task_name]["focus"]
         if fraud_ring_group is not None:
@@ -542,6 +659,8 @@ class KaggleDataLoader:
 
         return {
             "task_focus": TASK_SPECS[task_name]["focus"],
+            "snapshot_id": self.bundle_metadata.get("snapshot_id") if self.bundle_metadata else "fraudshield-realworld-v1",
+            "source_id": PRIMARY_SOURCE_ID,
             "seller_transactions_1h": seller_velocity,
             "linked_cards_7d": linked_cards,
             "recent_refunds_7d": recent_refunds,
@@ -555,3 +674,7 @@ class KaggleDataLoader:
         task_bias = {"easy": 0.00, "medium": 0.10, "hard": 0.18}[task_name]
         label_bias = 0.28 if label == "fraud" else 0.02
         return self._clamp(0.75 + task_bias + label_bias + anomaly_strength * 0.35, 0.55, 1.85)
+
+
+# Backward-compatible alias to avoid breaking older imports.
+KaggleDataLoader = FraudDataLoader

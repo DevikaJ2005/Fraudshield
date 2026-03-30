@@ -25,7 +25,7 @@ env = FraudShieldEnvironment(data_path=str(DATA_PATH), seed=42)
 async def lifespan(_: FastAPI):
     """Load the bundled task set when the API process starts."""
 
-    if not env.load_kaggle_data():
+    if not env.load_data():
         logger.error("FraudShield failed to load its bundled data from %s", DATA_PATH)
     yield
 
@@ -43,7 +43,7 @@ async def health_check() -> Dict[str, Any]:
     """Container health probe."""
 
     if not env.data_loaded:
-        env.load_kaggle_data()
+        env.load_data()
 
     return {
         "status": "healthy" if env.data_loaded else "degraded",
@@ -103,12 +103,13 @@ async def get_info() -> Dict[str, Any]:
     return {
         "name": "fraudshield",
         "version": "0.2.0",
-        "description": "E-commerce fraud review environment built from curated Kaggle cases.",
+        "description": "E-commerce fraud review environment built from a frozen public-data snapshot.",
         "tasks": {
             task.value: {"max_steps": max_steps}
             for task, max_steps in env.max_steps.items()
         },
         "data_path": str(DATA_PATH),
+        "data_snapshot": env.data_loader.get_bundle_summary(),
     }
 
 
