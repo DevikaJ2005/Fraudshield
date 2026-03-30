@@ -1,208 +1,202 @@
-"""
-FraudShield LLM Agent
-Uses Hugging Face Inference API for intelligent fraud detection
-"""
+"""Baseline agents for FraudShield."""
 
-import os
-import logging
-from typing import Optional
+from __future__ import annotations
+
 import json
-import requests
+import logging
+import os
+from typing import Any, Dict, Optional
 
-from models import FraudCheckAction, DecisionEnum
+from models import DecisionEnum, FraudCheckAction
+
+try:  # pragma: no cover - optional in local smoke tests
+    from openai import OpenAI
+except ImportError:  # pragma: no cover - dependency installed in submission image
+    OpenAI = None
 
 logger = logging.getLogger(__name__)
 
 
-class LLMFraudDetectionAgent:
-    """
-    AI-powered fraud detection agent using Hugging Face Inference API
-    
-    Uses a language model to analyze transactions and make intelligent
-    fraud/legitimate decisions based on transaction features.
-    """
+class HeuristicFraudDetectionAgent:
+    """Deterministic local fallback for offline testing."""
 
-    def __init__(self, hf_token: Optional[str] = None):
-        """
-        Initialize LLM agent
-        
-        Args:
-            hf_token: HuggingFace API token (from env if not provided)
-        """
-        self.hf_token = hf_token or os.getenv("HF_TOKEN")
-        
-        if not self.hf_token:
-            raise ValueError(
-                "HF_TOKEN not provided. Set environment variable or pass token to __init__"
-            )
-        
-        # Use Mistral-7B (fast and accurate)
-        self.model_id = "mistralai/Mistral-7B-Instruct-v0.1"
-        self.api_url = f"https://api-inference.huggingface.co/models/{self.model_id}"
-        self.headers = {"Authorization": f"Bearer {self.hf_token}"}
-        
-        logger.info(f"LLM Agent initialized with model: {self.model_id}")
-
-    def _build_prompt(self, observation) -> str:
-        """Build prompt for LLM to analyze transaction"""
-        data = observation.transaction_data
-        
-        prompt = f"""You are a fraud detection expert analyzing an e-commerce transaction.
-
-TRANSACTION DATA:
-- Amount: ${data.amount:.2f}
-- Item Price: ${data.item_price:.2f}
-- Item Category: {data.item_category}
-- Seller Account Age: {data.seller_account_age_days} days
-- Buyer Account Age: {data.buyer_account_age_days} days
-- Seller Rating: {data.seller_avg_rating}/5.0 ({data.num_seller_reviews} reviews)
-- Seller Previous Fraud Flags: {data.previous_fraud_flags}
-- Shipping Address: {data.shipping_address}
-- Device Country: {data.device_country}
-- Payment Method: {data.payment_method}
-- Is Repeat Buyer: {data.is_repeat_buyer}
-- Timestamp: {data.timestamp}
-
-FRAUD INDICATORS TO CONSIDER:
-1. New sellers (< 7 days) with high purchases are risky
-2. Shipping to high-risk countries (NG, RU, CN, KP) is suspicious
-3. Device location different from shipping location can indicate fraud
-4. Accounts with previous fraud flags are risky
-5. Very high amounts for new sellers are red flags
-6. Repeat buyers are generally trustworthy
-7. Established sellers with many reviews are trustworthy
-
-TASK: Analyze this transaction and decide if it's FRAUD or LEGITIMATE.
-
-Respond in this EXACT format:
-DECISION: [FRAUD or LEGITIMATE]
-CONFIDENCE: [0.0 to 1.0]
-REASONING: [Brief explanation]"""
-        
-        return prompt
-
-    def _call_llm(self, prompt: str) -> str:
-        """Call Hugging Face Inference API"""
-        try:
-            payload = {
-                "inputs": prompt,
-                "parameters": {
-                    "max_new_tokens": 150,
-                    "temperature": 0.3,  # Lower temp = more consistent
-                }
-            }
-            
-            response = requests.post(
-                self.api_url,
-                headers=self.headers,
-                json=payload,
-                timeout=30
-            )
-            
-            if response.status_code != 200:
-                logger.warning(f"HF API error: {response.status_code}")
-                return None
-            
-            result = response.json()
-            
-            # Extract generated text
-            if isinstance(result, list) and len(result) > 0:
-                return result[0].get("generated_text", "")
-            
-            return None
-            
-        except requests.exceptions.Timeout:
-            logger.warning("HF API timeout - using fallback")
-            return None
-        except Exception as e:
-            logger.warning(f"HF API error: {e}")
-            return None
-
-    def _parse_response(self, response_text: str) -> tuple:
-        """
-        Parse LLM response to extract decision, confidence, reasoning
-        
-        Returns:
-            (decision, confidence, reasoning)
-        """
-        try:
-            if not response_text:
-                return None, 0.5, "LLM unavailable"
-            
-            lines = response_text.split('\n')
-            
-            decision = None
-            confidence = 0.5
-            reasoning = "Unable to parse response"
-            
-            for line in lines:
-                if "DECISION:" in line:
-                    decision_text = line.split("DECISION:")[-1].strip().upper()
-                    if "FRAUD" in decision_text:
-                        decision = "fraud"
-                    elif "LEGITIMATE" in decision_text:
-                        decision = "legitimate"
-                
-                elif "CONFIDENCE:" in line:
-                    try:
-                        conf_text = line.split("CONFIDENCE:")[-1].strip()
-                        confidence = float(conf_text.split()[0])
-                        confidence = max(0.0, min(1.0, confidence))
-                    except:
-                        pass
-                
-                elif "REASONING:" in line:
-                    reasoning = line.split("REASONING:")[-1].strip()
-            
-            return decision, confidence, reasoning
-            
-        except Exception as e:
-            logger.warning(f"Parse error: {e}")
-            return None, 0.5, "Parse error"
+    name = "heuristic-baseline"
 
     def decide(self, observation) -> FraudCheckAction:
-        """
-        Make fraud/legitimate decision using LLM
-        
-        Args:
-            observation: FraudCheckObservation
-            
-        Returns:
-            FraudCheckAction with decision and confidence
-        """
-        # Build prompt
-        prompt = self._build_prompt(observation)
-        
-        # Call LLM
-        logger.info(f"Calling LLM for transaction {observation.transaction_id}")
-        response = self._call_llm(prompt)
-        
-        # Parse response
-        decision, confidence, reasoning = self._parse_response(response)
-        
-        # Fallback if parsing fails
-        if decision is None:
-            logger.warning(f"Using fallback for {observation.transaction_id}")
-            decision = "legitimate"
-            confidence = 0.5
-            reasoning = "LLM unavailable, defaulting to legitimate"
-        
-        # Ensure reasoning is long enough
-        if len(reasoning) < 10:
-            reasoning = f"LLM analysis: {reasoning}"
-        
-        # Create action
-        action = FraudCheckAction(
+        data = observation.transaction_data
+        history = observation.historical_context or {}
+        risk_points = 0
+        reasons = []
+
+        amount_gap = data.amount / max(data.item_price, 1.0)
+        device_mismatch = data.device_country != data.shipping_address
+
+        if data.previous_fraud_flags > 0:
+            risk_points += 2
+            reasons.append("related accounts were flagged before")
+        if data.seller_chargeback_rate_30d >= 0.10:
+            risk_points += 2
+            reasons.append("seller chargeback rate is elevated")
+        if data.shared_device_accounts_24h >= 6:
+            risk_points += 2
+            reasons.append("device was reused by many accounts")
+        if data.same_address_orders_24h >= 5:
+            risk_points += 1
+            reasons.append("address velocity is unusually high")
+        if data.seller_account_age_days <= 30 and amount_gap >= 1.20:
+            risk_points += 2
+            reasons.append("new seller with a suspicious price gap")
+        if device_mismatch:
+            risk_points += 1
+            reasons.append("device country does not match shipping country")
+        if data.buyer_disputes_90d >= 2:
+            risk_points += 1
+            reasons.append("buyer has recent disputes")
+        if history.get("cluster_alert_score", 0.0) >= 0.75:
+            risk_points += 1
+            reasons.append("network cluster score is high")
+        if data.is_repeat_buyer and data.seller_avg_rating >= 4.5:
+            risk_points -= 2
+            reasons.append("repeat buyer with a highly rated seller")
+        if data.num_seller_reviews >= 500 and data.seller_chargeback_rate_30d <= 0.03:
+            risk_points -= 1
+            reasons.append("seller has strong review and chargeback history")
+
+        threshold = {"easy": 3, "medium": 4, "hard": 5}[observation.task_name.value]
+        margin = risk_points - threshold
+        decision = DecisionEnum.FRAUD if margin >= 0 else DecisionEnum.LEGITIMATE
+        confidence = min(0.95, max(0.55, 0.60 + abs(margin) * 0.08))
+        reasoning = "; ".join(reasons[:3]) if reasons else "signals are mixed but skew toward legitimate behavior"
+
+        return FraudCheckAction(
             transaction_id=observation.transaction_id,
-            decision=DecisionEnum(decision),
-            confidence=confidence,
-            reasoning=reasoning[:500]  # Truncate if too long
+            decision=decision,
+            confidence=round(confidence, 2),
+            reasoning=reasoning[:500],
         )
-        
-        logger.info(
-            f"LLM Decision: {decision} "
-            f"(confidence: {confidence:.2f}) "
-            f"for {observation.transaction_id}"
+
+
+class OpenAIFraudDetectionAgent:
+    """OpenAI-compatible agent used by the competition inference script."""
+
+    name = "openai-client-baseline"
+
+    def __init__(
+        self,
+        model_name: str,
+        api_key: str,
+        api_base_url: Optional[str] = None,
+        timeout: float = 30.0,
+    ):
+        if OpenAI is None:
+            raise ImportError("openai package is not installed. Install project dependencies first.")
+
+        self.model_name = model_name
+        self.api_base_url = api_base_url or "https://router.huggingface.co/v1"
+        self.client = OpenAI(base_url=self.api_base_url, api_key=api_key, timeout=timeout)
+        self.fallback = HeuristicFraudDetectionAgent()
+
+    def decide(self, observation) -> FraudCheckAction:
+        """Classify the current transaction with an OpenAI-compatible chat model."""
+
+        try:
+            completion = self.client.chat.completions.create(
+                model=self.model_name,
+                temperature=0.0,
+                max_tokens=180,
+                messages=self._build_messages(observation),
+            )
+            response_text = completion.choices[0].message.content or ""
+            payload = self._parse_payload(response_text)
+            decision = DecisionEnum(payload["decision"])
+            confidence = float(max(0.0, min(1.0, payload["confidence"])))
+            reasoning = str(payload["reasoning"])[:500]
+            if len(reasoning) < 10:
+                raise ValueError("reasoning is too short")
+            return FraudCheckAction(
+                transaction_id=observation.transaction_id,
+                decision=decision,
+                confidence=confidence,
+                reasoning=reasoning,
+            )
+        except Exception as exc:  # pragma: no cover - depends on external API
+            logger.warning("OpenAI baseline failed for %s: %s", observation.transaction_id, exc)
+            fallback_action = self.fallback.decide(observation)
+            fallback_action.reasoning = f"Fallback heuristic used after API error: {fallback_action.reasoning}"[:500]
+            return fallback_action
+
+    def _build_messages(self, observation) -> list[Dict[str, str]]:
+        data = observation.transaction_data
+        history = observation.historical_context or {}
+        user_prompt = {
+            "task": observation.task_name.value,
+            "transaction_id": observation.transaction_id,
+            "transaction": {
+                "amount": data.amount,
+                "item_price": data.item_price,
+                "item_category": data.item_category,
+                "seller_account_age_days": data.seller_account_age_days,
+                "buyer_account_age_days": data.buyer_account_age_days,
+                "payment_method": data.payment_method,
+                "shipping_address": data.shipping_address,
+                "device_country": data.device_country,
+                "shipping_speed": data.shipping_speed,
+                "seller_avg_rating": data.seller_avg_rating,
+                "num_seller_reviews": data.num_seller_reviews,
+                "previous_fraud_flags": data.previous_fraud_flags,
+                "seller_chargeback_rate_30d": data.seller_chargeback_rate_30d,
+                "buyer_disputes_90d": data.buyer_disputes_90d,
+                "shared_device_accounts_24h": data.shared_device_accounts_24h,
+                "same_address_orders_24h": data.same_address_orders_24h,
+                "amount_percentile": data.amount_percentile,
+                "is_repeat_buyer": data.is_repeat_buyer,
+            },
+            "historical_context": history,
+        }
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "You are reviewing one marketplace transaction for fraud. "
+                    "Return only JSON with keys decision, confidence, and reasoning. "
+                    "decision must be fraud or legitimate. confidence must be a number between 0 and 1. "
+                    "reasoning must be one short sentence grounded in the evidence."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(user_prompt, separators=(",", ":")),
+            },
+        ]
+
+    @staticmethod
+    def _parse_payload(response_text: str) -> Dict[str, Any]:
+        response_text = response_text.strip()
+        start = response_text.find("{")
+        end = response_text.rfind("}")
+        if start == -1 or end == -1:
+            raise ValueError("model did not return JSON")
+        payload = json.loads(response_text[start : end + 1])
+        if "decision" not in payload or "confidence" not in payload or "reasoning" not in payload:
+            raise ValueError("response is missing required keys")
+        return payload
+
+
+def build_default_agent() -> object:
+    """Create the required OpenAI client agent when configured, else use the offline fallback."""
+
+    model_name = os.getenv("MODEL_NAME")
+    api_key = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY")
+    api_base_url = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+
+    if model_name or api_key:
+        if not model_name or not api_key:
+            raise RuntimeError("Both MODEL_NAME and HF_TOKEN/OPENAI_API_KEY must be set for OpenAI baseline mode.")
+        return OpenAIFraudDetectionAgent(
+            model_name=model_name,
+            api_key=api_key,
+            api_base_url=api_base_url,
         )
-        
-        return action
+
+    logger.warning("MODEL_NAME and HF_TOKEN were not set. Falling back to the deterministic heuristic agent.")
+    return HeuristicFraudDetectionAgent()

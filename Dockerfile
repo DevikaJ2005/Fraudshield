@@ -1,29 +1,23 @@
 FROM python:3.11-slim
 
+ENV PYTHONUNBUFFERED=1
+ENV PORT=7860
+
 WORKDIR /app
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
-    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy project files
 COPY . .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -e ".[server]"
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir .
 
-# Create outputs directory for logs/evals
-RUN mkdir -p outputs/logs outputs/evals
+EXPOSE 7860
 
-# Expose port
-EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -fsS http://localhost:${PORT}/health || exit 1
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-# Run server
-CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "7860", "--workers", "1"]

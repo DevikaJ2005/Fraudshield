@@ -1,243 +1,125 @@
 #!/usr/bin/env python3
-"""
-FraudShield Inference - Kaggle Edition
-Tests the environment with Kaggle real data and LLM agent
+"""Competition baseline inference for FraudShield."""
 
-Usage:
-    # First time: download data
-    python download_kaggle_data.py
-    
-    # Then run inference
-    python inference.py
-    
-    # Or with LLM:
-    export HF_TOKEN="your_token"
-    python inference_llm.py
-"""
+from __future__ import annotations
 
-import os
-import sys
 import json
 import logging
-from typing import List
+import os
+import sys
+from typing import Dict, List, Tuple
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-# Import components
-from models import DecisionEnum, FraudCheckAction
 from fraudshield_env import FraudShieldEnvironment
 from graders import FraudShieldGrader
-from llm_agent import LLMFraudDetectionAgent
-from data_loader import KaggleDataLoader
+from llm_agent import build_default_agent
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
+RESULTS_FILE = "fraudshield_baseline_results.json"
 
 
-class SimpleHeuristicAgent:
-    """Rule-based fraud detection agent using real Kaggle patterns"""
+def run_task(env: FraudShieldEnvironment, agent: object, task_name: str) -> Tuple[List[str], List[str], List[float]]:
+    """Run one task episode and capture the full prediction trace."""
 
-    def decide(self, observation):
-        """Make fraud decision based on transaction features"""
-        data = observation.transaction_data
-        
-        # Rule 1: New seller + high amount
-        if data.seller_account_age_days < 7 and data.amount > data.item_price * 1.5:
-            return FraudCheckAction(
-                transaction_id=observation.transaction_id,
-                decision=DecisionEnum.FRAUD,
-                confidence=0.92,
-                reasoning="New seller with unusually high transaction amount relative to item price."
-            )
-        
-        # Rule 2: New seller + risky country
-        risky_countries = ["NG", "RU", "CN", "KP"]
-        if data.seller_account_age_days < 14 and data.shipping_address in risky_countries:
-            return FraudCheckAction(
-                transaction_id=observation.transaction_id,
-                decision=DecisionEnum.FRAUD,
-                confidence=0.88,
-                reasoning="New seller shipping to high-risk country detected."
-            )
-        
-        # Rule 3: Previous fraud flags
-        if data.previous_fraud_flags > 0:
-            return FraudCheckAction(
-                transaction_id=observation.transaction_id,
-                decision=DecisionEnum.FRAUD,
-                confidence=0.85,
-                reasoning=f"Account flagged {data.previous_fraud_flags} times previously."
-            )
-        
-        # Rule 4: Device mismatch + high amount
-        if data.device_country != data.shipping_address and data.amount > 1000:
-            return FraudCheckAction(
-                transaction_id=observation.transaction_id,
-                decision=DecisionEnum.FRAUD,
-                confidence=0.75,
-                reasoning="Device location mismatch with shipping location and high amount."
-            )
-        
-        # Rule 5: Low rating sellers
-        if data.seller_avg_rating < 2.0 and data.num_seller_reviews < 10:
-            return FraudCheckAction(
-                transaction_id=observation.transaction_id,
-                decision=DecisionEnum.FRAUD,
-                confidence=0.70,
-                reasoning="Low-rated seller with few reviews."
-            )
-        
-        # Default: Legitimate
-        return FraudCheckAction(
-            transaction_id=observation.transaction_id,
-            decision=DecisionEnum.LEGITIMATE,
-            confidence=0.75,
-            reasoning="No major fraud indicators detected."
-        )
+    logger.info("%s", "=" * 72)
+    logger.info("Running %s task with %s", task_name.upper(), getattr(agent, "name", agent.__class__.__name__))
+    logger.info("%s", "=" * 72)
 
-
-def run_task_with_agent(
-    env: FraudShieldEnvironment,
-    agent,
-    task_name: str,
-    agent_name: str = "Rule-Based"
-) -> tuple:
-    """Run agent on a single task"""
-    logger.info(f"\n{'='*70}")
-    logger.info(f"Running {task_name.upper()} task with {agent_name} Agent...")
-    logger.info(f"{'='*70}")
-    
-    # Reset
     reset_result = env.reset(task_name)
-    logger.info(f"Episode: {env.episode_id}")
-    logger.info(f"Transactions: {len(env.current_transactions)}")
-    
-    predictions = []
-    confidences = []
-    step_count = 0
-    
-    # Run
+    logger.info("Episode %s contains %s transactions", env.episode_id, reset_result.info["num_transactions"])
+
+    observation = reset_result.observation
+    predictions: List[str] = []
+    confidences: List[float] = []
+
     while not env.is_done:
-        observation = env._get_observation() if step_count == 0 else step_result.observation
-        
-        try:
-            action = agent.decide(observation)
-        except Exception as e:
-            logger.warning(f"Agent error: {e}, using fallback")
-            from models import FraudCheckAction
-            action = FraudCheckAction(
-                transaction_id=observation.transaction_id,
-                decision=DecisionEnum.LEGITIMATE,
-                confidence=0.5,
-                reasoning="Agent error"
-            )
-        
+        action = agent.decide(observation)
         predictions.append(action.decision.value)
         confidences.append(action.confidence)
-        
         step_result = env.step(action)
-        step_count += 1
-        
-        # Log progress
-        if step_count % 20 == 0 or step_count == 1:
+
+        if env.step_count in {1, len(env.current_cases)} or env.step_count % 10 == 0:
             logger.info(
-                f"  Step {step_count:3d}: {action.decision.value:10s} "
-                f"({action.confidence:.2f}) → {step_result.reward.value:+.2f}"
+                "Step %02d | decision=%s | confidence=%.2f | reward=%+.2f",
+                env.step_count,
+                action.decision.value,
+                action.confidence,
+                step_result.reward.value,
             )
-    
-    logger.info(f"✓ {task_name.upper()} complete: {step_count} steps")
-    ground_truth = env.ground_truth_labels
-    
-    return predictions, ground_truth, confidences
 
+        observation = step_result.observation
 
-def main():
-    """Main inference"""
-    logger.info("\n" + "="*70)
-    logger.info("🚀 FraudShield Inference - Kaggle Real Data Edition")
-    logger.info("="*70)
-    
-    # Check data
-    data_loader = KaggleDataLoader(data_path="data")
-    if not data_loader.load_data():
-        logger.error("❌ Data not found!")
-        logger.error("Run: python download_kaggle_data.py")
-        sys.exit(1)
-    
-    logger.info("✓ Kaggle data loaded successfully")
-    
-    # Initialize
-    env = FraudShieldEnvironment(data_path="data", seed=42)
-    env.load_kaggle_data()
-    agent = SimpleHeuristicAgent()
-    
-    logger.info("✓ Environment and agent initialized")
-    
-    # Run tasks
-    logger.info("\n📋 Running all 3 tasks with real Kaggle data...")
-    
-    try:
-        easy_pred, easy_truth, easy_conf = run_task_with_agent(env, agent, "easy")
-        medium_pred, medium_truth, medium_conf = run_task_with_agent(env, agent, "medium")
-        hard_pred, hard_truth, hard_conf = run_task_with_agent(env, agent, "hard")
-    except Exception as e:
-        logger.error(f"Execution error: {e}", exc_info=True)
-        sys.exit(1)
-    
-    # Grade
-    logger.info("\n" + "="*70)
-    logger.info("📊 GRADING RESULTS")
-    logger.info("="*70)
-    
-    grading_result = FraudShieldGrader.grade_all_tasks(
-        easy_pred, easy_truth, easy_conf,
-        medium_pred, medium_truth, medium_conf,
-        hard_pred, hard_truth, hard_conf,
+    logger.info(
+        "Finished %s: accuracy_so_far=%.3f cumulative_reward=%.3f",
+        task_name.upper(),
+        env.correct_predictions / max(1, env.step_count),
+        env.cumulative_reward,
     )
-    
-    # Display results
-    logger.info(f"\n📊 EASY:   {grading_result['easy']['score']:.4f}")
-    logger.info(f"   Acc: {grading_result['easy']['metrics']['accuracy']:.4f} | "
-                f"F1: {grading_result['easy']['metrics']['f1_score']:.4f}")
-    
-    logger.info(f"\n📊 MEDIUM: {grading_result['medium']['score']:.4f}")
-    logger.info(f"   Precision: {grading_result['medium']['metrics']['precision']:.4f} | "
-                f"F1: {grading_result['medium']['metrics']['f1_score']:.4f}")
-    
-    logger.info(f"\n📊 HARD:   {grading_result['hard']['score']:.4f}")
-    logger.info(f"   Recall: {grading_result['hard']['metrics']['recall']:.4f} | "
-                f"F1: {grading_result['hard']['metrics']['f1_score']:.4f}")
-    
-    logger.info("\n" + "="*70)
-    logger.info(f"🏆 FINAL SCORE: {grading_result['final_score']:.4f}")
-    logger.info("="*70)
-    
-    # Save
-    output_file = "fraudshield_kaggle_results.json"
-    with open(output_file, "w") as f:
-        json.dump(grading_result, f, indent=2)
-    logger.info(f"\n✓ Results saved to: {output_file}")
-    
-    # Summary
-    logger.info("\n" + "="*70)
-    logger.info("REAL DATA PERFORMANCE (Kaggle Credit Card Dataset)")
-    logger.info("="*70)
-    logger.info(f"Easy Score:     {grading_result['easy']['score']:.4f}")
-    logger.info(f"Medium Score:   {grading_result['medium']['score']:.4f}")
-    logger.info(f"Hard Score:     {grading_result['hard']['score']:.4f}")
-    logger.info(f"Final Score:    {grading_result['final_score']:.4f}")
-    logger.info("="*70)
-    
+    return predictions, list(env.ground_truth_labels), confidences
+
+
+def main() -> Dict[str, object]:
+    """Run the baseline across all tasks and persist the report."""
+
+    logger.info("%s", "=" * 72)
+    logger.info("FraudShield baseline inference")
+    logger.info("%s", "=" * 72)
+
+    env = FraudShieldEnvironment(data_path="data", seed=42)
+    if not env.load_kaggle_data():
+        logger.error("FraudShield data could not be loaded from ./data")
+        sys.exit(1)
+
+    agent = build_default_agent()
+    logger.info(
+        "Agent mode: %s | API_BASE_URL=%s | MODEL_NAME=%s",
+        getattr(agent, "name", agent.__class__.__name__),
+        os.getenv("API_BASE_URL", "https://router.huggingface.co/v1"),
+        os.getenv("MODEL_NAME", "<offline-heuristic>"),
+    )
+
+    easy_predictions, easy_ground_truth, easy_confidences = run_task(env, agent, "easy")
+    medium_predictions, medium_ground_truth, medium_confidences = run_task(env, agent, "medium")
+    hard_predictions, hard_ground_truth, hard_confidences = run_task(env, agent, "hard")
+
+    grading_result = FraudShieldGrader.grade_all_tasks(
+        easy_predictions,
+        easy_ground_truth,
+        easy_confidences,
+        medium_predictions,
+        medium_ground_truth,
+        medium_confidences,
+        hard_predictions,
+        hard_ground_truth,
+        hard_confidences,
+    )
+    grading_result["metadata"] = {
+        "agent_name": getattr(agent, "name", agent.__class__.__name__),
+        "api_base_url": os.getenv("API_BASE_URL", "https://router.huggingface.co/v1"),
+        "model_name": os.getenv("MODEL_NAME", ""),
+        "seed": 42,
+        "tasks": {
+            "easy": len(easy_ground_truth),
+            "medium": len(medium_ground_truth),
+            "hard": len(hard_ground_truth),
+        },
+    }
+
+    logger.info("Easy score:   %.4f", grading_result["easy"]["score"])
+    logger.info("Medium score: %.4f", grading_result["medium"]["score"])
+    logger.info("Hard score:   %.4f", grading_result["hard"]["score"])
+    logger.info("Final score:  %.4f", grading_result["final_score"])
+
+    with open(RESULTS_FILE, "w", encoding="utf-8") as handle:
+        json.dump(grading_result, handle, indent=2)
+    logger.info("Saved baseline report to %s", RESULTS_FILE)
     return grading_result
 
 
 if __name__ == "__main__":
     try:
-        result = main()
-        logger.info("\n✓ Inference completed successfully!\n")
-        sys.exit(0)
-    except Exception as e:
-        logger.error(f"\n✗ Inference failed: {e}", exc_info=True)
+        main()
+    except Exception as exc:
+        logger.exception("Baseline inference failed: %s", exc)
         sys.exit(1)

@@ -1,7 +1,7 @@
 name: fraudshield
-version: 0.1.0
-description: E-commerce fraud detection environment for AI agents
-author: "Devika"
+version: 0.2.0
+description: OpenEnv environment for marketplace fraud review built from curated Kaggle transactions.
+author: Devika J
 
 environment:
   class: FraudShieldEnvironment
@@ -21,21 +21,24 @@ reward:
 
 tasks:
   - name: easy
-    description: "Clear fraud signals - New sellers, high amounts, risky countries"
+    description: Clear-cut fraud reviews with strong single-transaction indicators.
     difficulty: easy
-    num_transactions: 60
-    
+    num_transactions: 24
   - name: medium
-    description: "Mixed signals - Subtle patterns, false positives, ROC-AUC focus"
+    description: Mixed-signal reviews where confidence calibration and tradeoffs matter.
     difficulty: medium
-    num_transactions: 200
-    
+    num_transactions: 36
   - name: hard
-    description: "Ring fraud - Coordinated attacks, temporal patterns, network effects"
+    description: Coordinated fraud rings and legitimate flash-sale edge cases with overlapping signals.
     difficulty: hard
-    num_transactions: 350
+    num_transactions: 48
 
 metadata:
-  created: "2026-03-28"
-  framework: "openenv"
-  license: "MIT"
+  created: "2026-03-30"
+  framework: openenv
+  license: MIT
+  tags:
+    - openenv
+    - fraud-detection
+    - e-commerce
+    - agent-evaluation

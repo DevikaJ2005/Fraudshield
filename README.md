@@ -1,420 +1,218 @@
-# FraudShield: Real Fraud Detection with Kaggle Data
+# FraudShield
 
-**Production-grade AI fraud detection system trained on real Kaggle Credit Card transactions**
+FraudShield is an OpenEnv environment for marketplace fraud review. An agent receives one e-commerce transaction at a time, decides whether it is `fraud` or `legitimate`, and gets dense reward shaped by business impact, confidence calibration, and correctness.
 
-**Author**: Devika  
-**Email**: devikaj2005@gmail.com  
-**GitHub**: https://github.com/DevikaJ2005/fraudshield  
-**Hackathon**: Meta PyTorch OpenEnv 2026  
-**License**: MIT
+The environment is built from a compact task bundle derived from the Kaggle credit card fraud dataset. The bundle is committed as `data/fraudshield_cases.json`, so the repo stays self-contained for Docker and Hugging Face Spaces while still grounding the tasks in real fraud data.
 
----
+## Why this environment
 
-## 🌟 What Makes This Special
+Real commerce teams review risky orders all day: new sellers, chargeback-heavy merchants, reused devices, flash-sale spikes, and account-takeover style behavior. FraudShield turns that workflow into an agent training environment with:
 
-Unlike typical hackathon projects using synthetic data, **FraudShield uses REAL data**:
+- A real-world domain instead of a toy game
+- Typed `Action`, `Observation`, and `Reward` models
+- `reset()`, `step()`, and `state()` APIs
+- Three graded tasks with deterministic scoring from `0.0` to `1.0`
+- Dense step rewards with partial progress signals
+- A root `inference.py` baseline compatible with the required OpenAI client flow
 
-- ✅ **284,807 real credit card transactions** from Kaggle
-- ✅ **492 actual frauds** with real patterns
-- ✅ **Machine learning on production data**
-- ✅ **Two baseline agents** (rule-based + LLM)
-- ✅ **Professional implementation** with proper error handling
+## Tasks
 
----
+| Task | Cases | Goal | What makes it hard |
+| --- | ---: | --- | --- |
+| Easy | 24 | Catch obvious fraud while avoiding basic false positives | Single-transaction red flags are strong and low-noise |
+| Medium | 36 | Balance fraud capture with calibration | No single signal is decisive; tradeoffs matter |
+| Hard | 48 | Handle coordinated abuse and edge-case legitimate traffic | Fraud rings and flash-sale behavior intentionally overlap |
 
-## 🚀 Quick Start (5 Minutes)
+Each task uses a deterministic grader in [graders.py](/c:/Users/Jayashanker/Downloads/fraudshield_kaggle_ready/fraudshield_kaggle/graders.py).
 
-### 1. Setup
+## Action space
 
-```bash
-# Clone or extract project
-git clone https://github.com/DevikaJ2005/fraudshield.git
-cd fraudshield
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# Install dependencies
-python -m pip install -e ".[server,dev]"
-```
-
-### 2. Download Kaggle Data (First time only)
-
-```bash
-# Ensure kaggle.json is in ~/.kaggle/ directory
-# (Get token from https://www.kaggle.com/settings/account)
-
-python download_kaggle_data.py
-```
-
-### 3. Run Baseline Inference
-
-```bash
-# Rule-based agent
-python inference.py
-
-# LLM-powered agent (requires HF_TOKEN)
-export HF_TOKEN="your_hf_token"
-python inference_llm.py
-```
-
----
-
-## 📊 Results on Real Data
-
-### Rule-Based Agent
-```
-🏆 FINAL SCORE: ~0.78-0.82
-- Easy:   0.90+ (Clear fraud signals)
-- Medium: 0.75+ (Mixed patterns)
-- Hard:   0.70+ (Ring fraud)
-```
-
-### LLM Agent (Mistral-7B)
-```
-🏆 FINAL SCORE: ~0.75-0.87
-- Easy:   0.82+ (Intelligent analysis)
-- Medium: 0.80+ (Context-aware)
-- Hard:   0.73+ (Pattern detection)
-```
-
-**Note**: Real data scores differ from synthetic because of actual fraud complexity!
-
----
-
-## 📁 Project Structure
-
-```
-fraudshield/
-├── Core Environment
-│   ├── models.py                    # Pydantic models
-│   ├── fraudshield_env.py           # Environment with Kaggle data
-│   ├── graders.py                   # Task evaluation
-│   └── data_loader.py               # Kaggle data handler
-│
-├── Baseline Agents
-│   ├── inference.py                 # Rule-based agent
-│   ├── inference_llm.py             # LLM agent
-│   └── llm_agent.py                 # LLM integration
-│
-├── Data & Config
-│   ├── download_kaggle_data.py      # Data downloader
-│   ├── pyproject.toml               # Dependencies
-│   ├── openenv.yaml                 # OpenEnv spec
-│   └── Dockerfile                   # Containerization
-│
-├── Server
-│   └── server/app.py                # FastAPI server
-│
-└── Documentation
-    ├── README.md                    # This file
-    └── .gitignore, .dockerignore    # Git config
-```
-
----
-
-## 📖 Understanding the System
-
-### Data Pipeline
-
-```
-Kaggle Download
-       ↓
-CSV Loading (data_loader.py)
-       ↓
-Task-Specific Splitting (3 difficulty levels)
-       ↓
-FraudShieldEnvironment
-       ↓
-Agent (Rule-Based or LLM)
-       ↓
-Grading (Precision, Recall, F1, ROC-AUC)
-```
-
-### Three Difficulty Levels
-
-#### **EASY** (60 transactions)
-- Clear fraud signals
-- New sellers, high amounts, risky countries
-- Expected accuracy: 90%+
-
-#### **MEDIUM** (100 transactions)
-- Mixed signals
-- Subtle patterns, account behavior
-- Expected accuracy: 75%+
-
-#### **HARD** (200 transactions)
-- Complex patterns
-- Ring fraud, temporal anomalies
-- Expected accuracy: 70%+
-
----
-
-## 🤖 Two Baseline Agents
-
-### Agent 1: Rule-Based
-**File**: `inference.py`
+Agents emit a single [FraudCheckAction](/c:/Users/Jayashanker/Downloads/fraudshield_kaggle_ready/fraudshield_kaggle/models.py):
 
 ```python
-Rules:
-1. New seller (<7 days) + High amount → FRAUD
-2. Risky country (NG, RU, CN) → FRAUD  
-3. Previous fraud flags → FRAUD
-4. Device mismatch + High amount → FRAUD
-5. Low rating sellers → FRAUD
+FraudCheckAction(
+    transaction_id: str,
+    decision: Literal["fraud", "legitimate"],
+    confidence: float,  # 0.0 to 1.0
+    reasoning: str,
+)
 ```
 
-**Pros**: Fast, deterministic, interpretable  
-**Cons**: Limited to known patterns
+## Observation space
 
-### Agent 2: LLM-Powered
-**File**: `inference_llm.py`
+Each step returns a [FraudCheckObservation](/c:/Users/Jayashanker/Downloads/fraudshield_kaggle_ready/fraudshield_kaggle/models.py) with structured transaction facts and rolling context:
 
-Uses **Mistral-7B** via Hugging Face to intelligently analyze transactions.
+- Transaction facts: amount, seller age, buyer age, payment method, geo mismatch, rating, prior flags, chargeback rate, shared-device counts, same-address velocity, and more
+- Historical context: seller velocity, linked cards, refund counts, cluster alert score, and task-specific notes
+- Task metadata: difficulty and episode step
 
-**Pros**: Context-aware, handles edge cases  
-**Cons**: Slower (2-3 sec per transaction), requires HF token
+## Reward design
 
----
+Rewards are dense and cost-sensitive in [fraudshield_env.py](/c:/Users/Jayashanker/Downloads/fraudshield_kaggle_ready/fraudshield_kaggle/fraudshield_env.py):
 
-## 🔧 Setup Guide
+- Correct fraud catches receive the strongest positive reward
+- Correct legitimate approvals still earn positive reward, but less than catching fraud
+- False negatives are punished more than false positives
+- Confidence is rewarded when it matches hidden case difficulty and punished when it is overconfident
+- Submitting the wrong `transaction_id` adds an extra penalty
 
-### Prerequisites
-- Python 3.10+
-- Kaggle account (free)
-- For LLM: Hugging Face account (free)
+This gives the agent signal across the full trajectory instead of only at episode end.
 
-### Step 1: Get Kaggle Token
+## Graders
 
-1. Go to: https://www.kaggle.com/join
-2. Sign up (free)
-3. Go to: https://www.kaggle.com/settings/account
-4. Scroll to "API"
-5. Click "Create New API Token"
-6. Save `kaggle.json` to `~/.kaggle/kaggle.json`
+The three task graders are deterministic and return `0.0` to `1.0`.
 
-### Step 2: Install Dependencies
+- Easy: accuracy, F1, recall, and specificity
+- Medium: F1, ROC-AUC, precision, and confidence calibration
+- Hard: recall, precision, F1, ROC-AUC, and calibration
+
+## Baseline inference
+
+The required root script is [inference.py](/c:/Users/Jayashanker/Downloads/fraudshield_kaggle_ready/fraudshield_kaggle/inference.py).
+
+- Competition mode: if `API_BASE_URL`, `MODEL_NAME`, and `HF_TOKEN` are set, it uses the OpenAI client against that endpoint
+- Local smoke-test mode: if those variables are missing, it falls back to a deterministic heuristic agent so the repo can still be verified offline
+
+Required environment variables for the competition path:
 
 ```bash
-python -m pip install -e ".[server,dev]"
+API_BASE_URL=https://router.huggingface.co/v1
+MODEL_NAME=<your-model-id>
+HF_TOKEN=<your-token>
 ```
 
-### Step 3: Download Data
+Run it with:
 
 ```bash
+python inference.py
+```
+
+The script writes `fraudshield_baseline_results.json` in the project root.
+
+### Local offline baseline
+
+With the deterministic heuristic fallback and seed `42`, the current local smoke-test scores are:
+
+| Task | Score |
+| --- | ---: |
+| Easy | 1.0000 |
+| Medium | 0.8773 |
+| Hard | 0.7206 |
+| Final | 0.8660 |
+
+## Project layout
+
+```text
+fraudshield_kaggle/
+├── data/
+│   └── fraudshield_cases.json
+├── server/
+│   ├── __init__.py
+│   └── app.py
+├── data_loader.py
+├── download_kaggle_data.py
+├── Dockerfile
+├── fraudshield_env.py
+├── graders.py
+├── inference.py
+├── inference_llm.py
+├── llm_agent.py
+├── models.py
+├── openenv.yaml
+└── pyproject.toml
+```
+
+## Setup
+
+Install the project:
+
+```bash
+python -m pip install -e .
+```
+
+Optional: if you want to regenerate the compact bundle from the original Kaggle CSV instead of using the committed task file:
+
+```bash
+python -m pip install -e ".[data]"
 python download_kaggle_data.py
 ```
 
-**First run**: Downloads ~50MB (1-2 minutes)  
-**Subsequent runs**: Uses cached data (instant)
+## Running the environment locally
 
-### Step 4: Run Inference
-
-```bash
-# Rule-based (no setup needed)
-python inference.py
-
-# LLM (requires HF token)
-export HF_TOKEN="hf_your_token"
-python inference_llm.py
-```
-
----
-
-## 📊 Kaggle Dataset Details
-
-**Credit Card Fraud Detection**
-- **Source**: https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud
-- **Transactions**: 284,807
-- **Frauds**: 492 (0.17%)
-- **Features**: 31 (28 PCA + Amount + Time + Class)
-- **Time Period**: 2 days in September 2013
-
-### Features Used
-
-Our environment extracts:
-- Amount (transaction value)
-- Seller/Buyer IDs
-- Shipping address
-- Account age
-- Payment method
-- Device location
-- Transaction history
-- And more...
-
----
-
-## 🏆 Grading Logic
-
-### Easy Task
-```
-Score = (Accuracy × 0.40) + (F1 × 0.30) + (Recall × 0.20) + (1 - FP_Rate × 2) × 0.10
-```
-
-### Medium Task
-```
-Score = (F1 × 0.60) + (ROC-AUC × 0.40)
-```
-
-### Hard Task
-```
-Score = (Recall × 0.40) + (Precision × 0.30) + (F1 × 0.20) + (1 - FN_Rate × 3) × 0.10
-```
-
-### Final Score
-```
-Final = (Easy + Medium + Hard) / 3
-```
-
----
-
-## 💻 Advanced Usage
-
-### Custom Agent Implementation
+### Python API
 
 ```python
 from fraudshield_env import FraudShieldEnvironment
+from models import DecisionEnum, FraudCheckAction
 
-env = FraudShieldEnvironment(data_path="data")
+env = FraudShieldEnvironment(data_path="data", seed=42)
 env.load_kaggle_data()
-reset_result = env.reset("easy")
+reset_result = env.reset("medium")
 
-observation = reset_result.observation
+action = FraudCheckAction(
+    transaction_id=reset_result.observation.transaction_id,
+    decision=DecisionEnum.LEGITIMATE,
+    confidence=0.62,
+    reasoning="Signals are mixed but seller history is reasonably stable.",
+)
 
-# Your agent logic here
-decision = your_agent.decide(observation)
-
-step_result = env.step(decision)
+step_result = env.step(action)
+print(step_result.reward.value, step_result.done)
 ```
 
-### Batch Processing
+### FastAPI server
 
-```python
-predictions = []
-for task in ["easy", "medium", "hard"]:
-    reset_result = env.reset(task)
-    while not env.is_done:
-        # Process transaction
-        pass
-    predictions.extend(env.predictions)
+```bash
+uvicorn server.app:app --host 0.0.0.0 --port 7860
 ```
 
-### Docker Deployment
+Endpoints:
+
+- `GET /health`
+- `POST /reset?task=easy|medium|hard`
+- `POST /step`
+- `GET /state`
+- `GET /info`
+- `GET /tasks`
+
+## Docker
+
+Build and run:
 
 ```bash
 docker build -t fraudshield .
-docker run -p 8000:8000 fraudshield
+docker run -p 7860:7860 fraudshield
 ```
 
----
+The container listens on port `7860`, which is the expected default for Hugging Face Docker Spaces.
 
-## 🚨 Troubleshooting
+## Hugging Face Spaces
 
-### Issue: `kaggle.json not found`
-```
-Solution:
-1. Get token from: https://www.kaggle.com/settings/account
-2. Click "Create New API Token"
-3. Save to: ~/.kaggle/kaggle.json
-```
+This repo is ready for a Docker Space:
 
-### Issue: `HF_TOKEN not found`
-```
-Solution:
-export HF_TOKEN="your_token_here"
-# Or on Windows:
-set HF_TOKEN=your_token_here
-```
+- Include `openenv` in the Space tags
+- Use the provided `Dockerfile`
+- Expose the app on port `7860`
+- Set `API_BASE_URL`, `MODEL_NAME`, and `HF_TOKEN` in the Space secrets if you want the LLM baseline to run there
 
-### Issue: Data download fails
-```
-Solution:
-1. Verify kaggle.json exists
-2. Check internet connection
-3. Ensure Kaggle API is installed: pip install kaggle
+## Validation checklist
+
+Before submission:
+
+```bash
+python inference.py
+openenv validate openenv.yaml
+docker build -t fraudshield .
+docker run -p 7860:7860 fraudshield
 ```
 
-### Issue: Slow inference
-```
-LLM agent is normal slower (2-3 sec/transaction)
-Use rule-based agent for faster results
-```
+Then verify:
 
----
+- `http://localhost:7860/health`
+- `POST http://localhost:7860/reset?task=easy`
 
-## 📈 Performance Benchmarks
+## Notes
 
-On real Kaggle data:
-
-| Agent | Easy | Medium | Hard | Final |
-|-------|------|--------|------|-------|
-| Rule-Based | 0.90 | 0.75 | 0.70 | 0.78 |
-| LLM | 0.82 | 0.80 | 0.73 | 0.78 |
-
-*Scores vary based on data split randomization*
-
----
-
-## 🔐 Security & Privacy
-
-✅ **No sensitive data**: Using anonymized Kaggle dataset  
-✅ **No credentials in code**: Token via environment variables  
-✅ **Safe for GitHub**: All secrets excluded via .gitignore  
-✅ **Production-ready**: Error handling, logging, validation
-
----
-
-## 📝 Submission Checklist
-
-- [ ] Kaggle data downloaded and working
-- [ ] Rule-based agent scores: 0.70+
-- [ ] LLM agent (optional) scores: 0.70+
-- [ ] `fraudshield_kaggle_results.json` created
-- [ ] Docker builds successfully
-- [ ] Code pushed to GitHub (public repo)
-- [ ] HF Space deployed (optional)
-- [ ] README complete
-
----
-
-## 🎯 For Hackathon Judges
-
-This submission demonstrates:
-
-1. **Real Data Handling** - Using production Kaggle dataset
-2. **Multiple Approaches** - Rule-based + LLM agents
-3. **Professional Code** - Proper structure, error handling, documentation
-4. **OpenEnv Compliance** - Full spec implementation
-5. **Deployment Ready** - Docker + HF Spaces + API server
-6. **Scalability** - Handles 610 transactions efficiently
-7. **Explainability** - Agents provide reasoning
-
----
-
-## 📞 Support
-
-**Questions?** Open an issue on GitHub or email: devikaj2005@gmail.com
-
-**Stuck with Kaggle?** Check: https://www.kaggle.com/docs/api
-
-**Need LLM help?** Check: https://huggingface.co/docs/hub
-
----
-
-## 📜 License
-
-MIT License - See LICENSE file
-
----
-
-## 🎉 Credits
-
-- **Dataset**: Kaggle MLG-ULB Credit Card Fraud Detection
-- **OpenEnv**: Meta PyTorch OpenEnv Framework
-- **LLM**: Mistral via Hugging Face Inference API
-- **Built for**: Meta PyTorch OpenEnv Hackathon 2026
-
----
-
-**Made with ❤️ for winning the hackathon** 🏆
+- The committed task bundle is small on purpose so the repo stays deployable without external downloads
+- The source CSV is optional and only needed if you want to regenerate the bundle
+- `inference_llm.py` is kept as a backward-compatible wrapper to the main baseline entrypoint

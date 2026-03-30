@@ -1,86 +1,50 @@
 #!/usr/bin/env python3
-"""
-Download Kaggle Credit Card Fraud Detection Dataset
-Run this once to download data for the project
+"""Download the Kaggle source CSV and regenerate the compact FraudShield bundle."""
 
-Usage:
-    python download_kaggle_data.py
-"""
+from __future__ import annotations
 
-import os
-import sys
 import logging
+import sys
 from pathlib import Path
 
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+from data_loader import KaggleDataLoader
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def check_kaggle_setup():
-    """Check if Kaggle is properly configured"""
-    kaggle_dir = Path.home() / ".kaggle"
-    kaggle_json = kaggle_dir / "kaggle.json"
-    
-    if not kaggle_json.exists():
-        logger.error("❌ kaggle.json not found!")
-        logger.error(f"   Expected location: {kaggle_json}")
-        logger.error("\n📋 Setup Instructions:")
-        logger.error("   1. Go to: https://www.kaggle.com/settings/account")
-        logger.error("   2. Scroll to 'API' section")
-        logger.error("   3. Click 'Create New API Token'")
-        logger.error("   4. This downloads kaggle.json")
-        logger.error(f"   5. Move it to: {kaggle_dir}/")
-        return False
-    
-    logger.info("✓ kaggle.json found")
-    return True
+def check_kaggle_setup() -> bool:
+    """Validate that the local Kaggle token exists."""
+
+    kaggle_json = Path.home() / ".kaggle" / "kaggle.json"
+    if kaggle_json.exists():
+        logger.info("Found %s", kaggle_json)
+        return True
+
+    logger.error("kaggle.json was not found at %s", kaggle_json)
+    logger.error("Create a Kaggle API token and place it there before running this script.")
+    return False
 
 
-def download_data():
-    """Download Kaggle dataset"""
-    try:
-        import kaggle
-        from data_loader import KaggleDataLoader
-        
-        logger.info("\n" + "="*70)
-        logger.info("📥 Downloading Kaggle Credit Card Fraud Dataset")
-        logger.info("="*70)
-        
-        loader = KaggleDataLoader(data_path="data")
-        
-        if loader.download_data():
-            logger.info("\n" + "="*70)
-            logger.info("✓ Download successful!")
-            logger.info("="*70)
-            
-            if loader.load_data():
-                logger.info("\n✓ Data loaded successfully!")
-                logger.info(f"  Total transactions: {len(loader.df)}")
-                logger.info(f"  Frauds: {(loader.df['Class'] == 1).sum()}")
-                logger.info(f"  Legitimate: {(loader.df['Class'] == 0).sum()}")
-                logger.info("\n✓ Ready to run inference!")
-                return True
-        
-        return False
-        
-    except ImportError:
-        logger.error("❌ kaggle package not installed!")
-        logger.error("   Run: pip install kaggle")
-        return False
-    except Exception as e:
-        logger.error(f"❌ Download failed: {e}")
-        return False
+def main() -> int:
+    """Download or refresh the source dataset, then rebuild the task bundle."""
+
+    if not check_kaggle_setup():
+        return 1
+
+    loader = KaggleDataLoader(data_path="data", seed=42)
+    if not loader.download_data():
+        return 1
+
+    if loader.bundle_file.exists():
+        loader.bundle_file.unlink()
+
+    if not loader.load_data():
+        return 1
+
+    logger.info("Task bundle is ready at %s", loader.bundle_file)
+    return 0
 
 
 if __name__ == "__main__":
-    logger.info("\n" + "="*70)
-    logger.info("🔍 Checking Kaggle Setup")
-    logger.info("="*70)
-    
-    if not check_kaggle_setup():
-        sys.exit(1)
-    
-    if not download_data():
-        sys.exit(1)
-    
-    logger.info("\n✓ All set! Run: python inference.py\n")
+    sys.exit(main())

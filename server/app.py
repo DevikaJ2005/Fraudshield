@@ -1,211 +1,169 @@
-"""
-FraudShield FastAPI Server
-OpenEnv-compatible REST API for fraud detection environment
-"""
+"""FastAPI server exposing the FraudShield environment."""
 
-from fastapi import FastAPI, HTTPException, WebSocket
-from fastapi.responses import JSONResponse
+from __future__ import annotations
+
 import logging
-from typing import Dict, Any
-import json
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, Dict
 
-from models import FraudCheckAction, DecisionEnum
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+
 from fraudshield_env import FraudShieldEnvironment
+from models import FraudCheckAction, TaskDifficulty
 
-# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
+DATA_PATH = Path(__file__).resolve().parents[1] / "data"
+env = FraudShieldEnvironment(data_path=str(DATA_PATH), seed=42)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Load the bundled task set when the API process starts."""
+
+    if not env.load_kaggle_data():
+        logger.error("FraudShield failed to load its bundled data from %s", DATA_PATH)
+    yield
+
+
 app = FastAPI(
     title="FraudShield",
-    description="E-Commerce Fraud Detection OpenEnv",
-    version="0.1.0"
+    description="OpenEnv-compatible e-commerce fraud review environment.",
+    version="0.2.0",
+    lifespan=lifespan,
 )
 
-# Global environment instance (in production, use session-based)
-env = FraudShieldEnvironment(seed=42)
-current_episode = None
-
-# ============================================================================
-# HEALTH CHECK
-# ============================================================================
 
 @app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy", "service": "fraudshield"}
+async def health_check() -> Dict[str, Any]:
+    """Container health probe."""
 
+    if not env.data_loaded:
+        env.load_kaggle_data()
 
-# ============================================================================
-# ENVIRONMENT ENDPOINTS
-# ============================================================================
+    return {
+        "status": "healthy" if env.data_loaded else "degraded",
+        "service": "fraudshield",
+        "data_loaded": env.data_loaded,
+    }
+
 
 @app.post("/reset")
-async def reset(task: str = "easy") -> Dict[str, Any]:
-    """
-    Reset environment for new episode
-    
-    Args:
-        task: "easy", "medium", or "hard"
-    
-    Returns:
-        Initial observation and metadata
-    """
-    global current_episode, env
-    
+async def reset(task: TaskDifficulty = TaskDifficulty.EASY) -> Dict[str, Any]:
+    """Start a new episode for the requested task."""
+
     try:
-        result = env.reset(task)
-        current_episode = env.episode_id
-        
+        result = env.reset(task.value)
         return {
-            "observation": result.observation.model_dump(),
+            "observation": result.observation.model_dump(mode="json"),
             "info": result.info,
-            "episode_id": env.episode_id
+            "episode_id": env.episode_id,
         }
-    except Exception as e:
-        logger.error(f"Reset error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.exception("Reset error")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/step")
-async def step(action_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Take a step in the environment
-    
-    Args:
-        action_data: {
-            "transaction_id": str,
-            "decision": "fraud" | "legitimate",
-            "confidence": float,
-            "reasoning": str
-        }
-    
-    Returns:
-        Observation, reward, done flag, and info
-    """
-    global env
-    
+async def step(action: FraudCheckAction) -> Dict[str, Any]:
+    """Submit one action to the environment."""
+
     try:
-        # Parse action
-        action = FraudCheckAction(
-            transaction_id=action_data["transaction_id"],
-            decision=DecisionEnum(action_data["decision"]),
-            confidence=float(action_data["confidence"]),
-            reasoning=str(action_data["reasoning"])
-        )
-        
-        # Step environment
         result = env.step(action)
-        
         return {
-            "observation": result.observation.model_dump(),
-            "reward": result.reward.model_dump(),
+            "observation": result.observation.model_dump(mode="json"),
+            "reward": result.reward.model_dump(mode="json"),
             "done": result.done,
-            "info": result.info
+            "info": result.info,
         }
-    except ValueError as e:
-        logger.error(f"Validation error: {e}")
-        raise HTTPException(status_code=400, detail=f"Invalid action: {str(e)}")
-    except Exception as e:
-        logger.error(f"Step error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.exception("Step error")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/state")
 async def get_state() -> Dict[str, Any]:
-    """
-    Get current episode state
-    
-    Returns:
-        Episode metadata
-    """
-    global env
-    
+    """Return the current episode state."""
+
     try:
-        state = env.state()
-        return state.model_dump()
-    except Exception as e:
-        logger.error(f"State error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return env.state().model_dump(mode="json")
+    except Exception as exc:
+        logger.exception("State error")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-
-# ============================================================================
-# METADATA ENDPOINTS
-# ============================================================================
 
 @app.get("/info")
 async def get_info() -> Dict[str, Any]:
-    """Get environment information"""
+    """Return static environment metadata."""
+
     return {
         "name": "fraudshield",
-        "version": "0.1.0",
-        "description": "E-commerce fraud detection environment",
-        "tasks": ["easy", "medium", "hard"],
-        "max_steps": env.max_steps
+        "version": "0.2.0",
+        "description": "E-commerce fraud review environment built from curated Kaggle cases.",
+        "tasks": {
+            task.value: {"max_steps": max_steps}
+            for task, max_steps in env.max_steps.items()
+        },
+        "data_path": str(DATA_PATH),
     }
 
 
 @app.get("/tasks")
 async def get_tasks() -> Dict[str, Any]:
-    """Get available tasks and their descriptions"""
+    """Describe the available task variants."""
+
     return {
         "easy": {
             "difficulty": "easy",
-            "num_transactions": 60,
-            "description": "Clear fraud signals - new sellers, high amounts, risky countries"
+            "num_transactions": env.max_steps[TaskDifficulty.EASY],
+            "description": "Clear-cut fraud indicators and low-noise legitimate cases.",
         },
         "medium": {
             "difficulty": "medium",
-            "num_transactions": 200,
-            "description": "Mixed signals - subtle patterns, false positives, ROC-AUC focus"
+            "num_transactions": env.max_steps[TaskDifficulty.MEDIUM],
+            "description": "Mixed-signal reviews where confidence calibration matters.",
         },
         "hard": {
             "difficulty": "hard",
-            "num_transactions": 350,
-            "description": "Ring fraud - coordinated attacks, temporal patterns, network effects"
-        }
+            "num_transactions": env.max_steps[TaskDifficulty.HARD],
+            "description": "Coordinated abuse and legitimate flash-sale edge cases.",
+        },
     }
 
 
-# ============================================================================
-# ERROR HANDLERS
-# ============================================================================
-
 @app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    """Global exception handler"""
-    logger.error(f"Unhandled exception: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error"}
-    )
+async def global_exception_handler(_, exc: Exception) -> JSONResponse:
+    """Catch any unhandled exception with a JSON error body."""
 
+    logger.exception("Unhandled exception")
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
 
-# ============================================================================
-# ROOT ENDPOINT
-# ============================================================================
 
 @app.get("/")
-async def root():
-    """Root endpoint with API documentation"""
+async def root() -> Dict[str, Any]:
+    """Service landing page."""
+
     return {
         "service": "FraudShield OpenEnv",
-        "version": "0.1.0",
-        "description": "E-commerce fraud detection environment for AI agents",
+        "version": "0.2.0",
+        "description": "E-commerce fraud review environment for agent training and evaluation.",
         "endpoints": {
             "health": "GET /health",
             "reset": "POST /reset?task=easy|medium|hard",
             "step": "POST /step",
             "state": "GET /state",
             "info": "GET /info",
-            "tasks": "GET /tasks"
+            "tasks": "GET /tasks",
         },
         "docs": "/docs",
-        "redoc": "/redoc"
     }
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, workers=4)
+
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "7860")), workers=1)
