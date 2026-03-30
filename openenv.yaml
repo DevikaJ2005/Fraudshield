@@ -1,0 +1,41 @@
+name: fraudshield
+version: 0.1.0
+description: E-commerce fraud detection environment for AI agents
+author: "Devika"
+
+environment:
+  class: FraudShieldEnvironment
+  module: fraudshield_env
+
+action:
+  class: FraudCheckAction
+  module: models
+
+observation:
+  class: FraudCheckObservation
+  module: models
+
+reward:
+  class: Reward
+  module: models
+
+tasks:
+  - name: easy
+    description: "Clear fraud signals - New sellers, high amounts, risky countries"
+    difficulty: easy
+    num_transactions: 60
+    
+  - name: medium
+    description: "Mixed signals - Subtle patterns, false positives, ROC-AUC focus"
+    difficulty: medium
+    num_transactions: 200
+    
+  - name: hard
+    description: "Ring fraud - Coordinated attacks, temporal patterns, network effects"
+    difficulty: hard
+    num_transactions: 350
+
+metadata:
+  created: "2026-03-28"
+  framework: "openenv"
+  license: "MIT"
