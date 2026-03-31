@@ -38,6 +38,9 @@ dev = [
 Homepage = "https://github.com/DevikaJ2005/fraudshield"
 Repository = "https://github.com/DevikaJ2005/fraudshield.git"
 
+[project.scripts]
+server = "server.app:main"
+
 [tool.setuptools]
 py-modules = [
     "data_loader",

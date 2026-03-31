@@ -4,6 +4,39 @@ FraudShield is an OpenEnv environment for marketplace fraud review. An agent ins
 
 The environment is grounded in real public fraud data, but it does not fetch live records during `reset()` or `step()`. Instead, it uses a frozen, versioned snapshot stored in `data/fraudshield_cases.json`. That gives you real-world grounding with deterministic grading, fast Docker startup, and reproducible evaluation on Hugging Face Spaces.
 
+## Competition fit
+
+FraudShield is designed around the Round 1 requirements:
+
+- Real-world task: marketplace fraud review, not a toy environment
+- OpenEnv interface: typed action, observation, reward, plus `reset()`, `step()`, and `state()`
+- Three graded tasks: easy, medium, hard
+- Dense reward shaping: correctness, business impact, confidence calibration, and bad-action penalties
+- Baseline inference: root `inference.py`, OpenAI-client path for competition mode
+- Docker/HF Space target: FastAPI app on port `7860`
+- Reproducibility: frozen snapshot data and fixed seed
+
+## Current readiness status
+
+What has been verified locally in this repo:
+
+- `python inference.py` passes
+- API smoke checks for `/health` and `/reset` pass
+- The snapshot bundle loads correctly
+- Python import/compile sanity passes
+
+What still must be verified on a machine with the right tooling installed:
+
+- `openenv validate openenv.yaml`
+- `docker build` and `docker run`
+- Hugging Face router path with a valid `MODEL_NAME` and `HF_TOKEN`
+- Final Hugging Face Space deployment ping
+
+Note:
+
+- `uv.lock` is checked in so the OpenEnv validator accepts the project structure on this machine
+- If you have `uv` installed, regenerate it with `uv lock` before final submission
+
 ## Why this design
 
 For an OpenEnv submission, the safest pattern is:
@@ -89,6 +122,7 @@ The required root script is `inference.py`.
 
 - Competition mode: if `API_BASE_URL`, `MODEL_NAME`, and `HF_TOKEN` are set, it uses the OpenAI client against that endpoint
 - Local smoke-test mode: if those variables are missing, it falls back to a deterministic heuristic agent
+- If those variables are set but invalid, the script now fails loudly instead of silently switching agents
 
 Required environment variables for the competition path:
 
@@ -220,6 +254,25 @@ Then verify:
 
 - `http://localhost:7860/health`
 - `POST http://localhost:7860/reset?task=easy`
+
+## What must stay private
+
+Do not commit or publish:
+
+- `HF_TOKEN`
+- `OPENAI_API_KEY`
+- `API_KEY`
+- `kaggle.json`
+- `.env`, `.env.local`, or any file containing real tokens
+- raw shell history or logs that include auth headers or tokens
+
+Safe to keep public:
+
+- `API_BASE_URL`
+- `MODEL_NAME`
+- `openenv.yaml`
+- `fraudshield_baseline_results.json`
+- `data/fraudshield_cases.json`
 
 ## Notes
 

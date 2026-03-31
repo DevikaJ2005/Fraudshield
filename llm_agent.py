@@ -94,7 +94,6 @@ class OpenAIFraudDetectionAgent:
         self.model_name = model_name
         self.api_base_url = api_base_url or "https://router.huggingface.co/v1"
         self.client = OpenAI(base_url=self.api_base_url, api_key=api_key, timeout=timeout)
-        self.fallback = HeuristicFraudDetectionAgent()
 
     def decide(self, observation) -> FraudCheckAction:
         """Classify the current transaction with an OpenAI-compatible chat model."""
@@ -120,10 +119,11 @@ class OpenAIFraudDetectionAgent:
                 reasoning=reasoning,
             )
         except Exception as exc:  # pragma: no cover - depends on external API
-            logger.warning("OpenAI baseline failed for %s: %s", observation.transaction_id, exc)
-            fallback_action = self.fallback.decide(observation)
-            fallback_action.reasoning = f"Fallback heuristic used after API error: {fallback_action.reasoning}"[:500]
-            return fallback_action
+            raise RuntimeError(
+                "OpenAI baseline request failed for "
+                f"{observation.transaction_id} using model '{self.model_name}' at '{self.api_base_url}'. "
+                "Check MODEL_NAME, HF_TOKEN, and API_BASE_URL."
+            ) from exc
 
     def _build_messages(self, observation) -> list[Dict[str, str]]:
         data = observation.transaction_data
