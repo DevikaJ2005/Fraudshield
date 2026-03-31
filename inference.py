@@ -19,6 +19,16 @@ logger = logging.getLogger(__name__)
 RESULTS_FILE = "fraudshield_baseline_results.json"
 
 
+def get_env(*names: str, default: str = "") -> str:
+    """Return the first non-empty environment variable from a list of aliases."""
+
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return default
+
+
 def run_task(env: FraudShieldEnvironment, agent: object, task_name: str) -> Tuple[List[str], List[str], List[float]]:
     """Run one task episode and capture the full prediction trace."""
 
@@ -75,8 +85,8 @@ def main() -> Dict[str, object]:
     logger.info(
         "Agent mode: %s | API_BASE_URL=%s | MODEL_NAME=%s",
         getattr(agent, "name", agent.__class__.__name__),
-        os.getenv("API_BASE_URL", "https://router.huggingface.co/v1"),
-        os.getenv("MODEL_NAME", "<offline-heuristic>"),
+        get_env("API_BASE_URL", "APIBASEURL", default="https://router.huggingface.co/v1"),
+        get_env("MODEL_NAME", "MODELNAME", default="<offline-heuristic>"),
     )
 
     easy_predictions, easy_ground_truth, easy_confidences = run_task(env, agent, "easy")
@@ -96,8 +106,8 @@ def main() -> Dict[str, object]:
     )
     grading_result["metadata"] = {
         "agent_name": getattr(agent, "name", agent.__class__.__name__),
-        "api_base_url": os.getenv("API_BASE_URL", "https://router.huggingface.co/v1"),
-        "model_name": os.getenv("MODEL_NAME", ""),
+        "api_base_url": get_env("API_BASE_URL", "APIBASEURL", default="https://router.huggingface.co/v1"),
+        "model_name": get_env("MODEL_NAME", "MODELNAME"),
         "seed": 42,
         "data_snapshot": env.data_loader.get_bundle_summary(),
         "tasks": {

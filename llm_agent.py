@@ -17,6 +17,16 @@ except ImportError:  # pragma: no cover - dependency installed in submission ima
 logger = logging.getLogger(__name__)
 
 
+def get_env(*names: str, default: Optional[str] = None) -> Optional[str]:
+    """Return the first non-empty environment variable from a list of aliases."""
+
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return default
+
+
 class HeuristicFraudDetectionAgent:
     """Deterministic local fallback for offline testing."""
 
@@ -185,18 +195,24 @@ class OpenAIFraudDetectionAgent:
 def build_default_agent() -> object:
     """Create the required OpenAI client agent when configured, else use the offline fallback."""
 
-    model_name = os.getenv("MODEL_NAME")
-    api_key = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY")
-    api_base_url = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+    model_name = get_env("MODEL_NAME", "MODELNAME")
+    api_key = get_env("HF_TOKEN", "HFTOKEN", "OPENAI_API_KEY", "OPENAIAPIKEY", "API_KEY", "APIKEY")
+    api_base_url = get_env("API_BASE_URL", "APIBASEURL", default="https://router.huggingface.co/v1")
 
     if model_name or api_key:
         if not model_name or not api_key:
-            raise RuntimeError("Both MODEL_NAME and HF_TOKEN/OPENAI_API_KEY must be set for OpenAI baseline mode.")
+            raise RuntimeError(
+                "Both MODEL_NAME/MODELNAME and HF_TOKEN/HFTOKEN "
+                "(or OPENAI_API_KEY/API_KEY) must be set for OpenAI baseline mode."
+            )
         return OpenAIFraudDetectionAgent(
             model_name=model_name,
             api_key=api_key,
             api_base_url=api_base_url,
         )
 
-    logger.warning("MODEL_NAME and HF_TOKEN were not set. Falling back to the deterministic heuristic agent.")
+    logger.warning(
+        "MODEL_NAME/MODELNAME and HF_TOKEN/HFTOKEN were not set. "
+        "Falling back to the deterministic heuristic agent."
+    )
     return HeuristicFraudDetectionAgent()

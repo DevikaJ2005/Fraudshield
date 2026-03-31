@@ -132,6 +132,14 @@ MODEL_NAME=<your-model-id>
 HF_TOKEN=<your-token>
 ```
 
+If your Hugging Face Space rejects underscores in variable names, FraudShield also accepts these aliases:
+
+```bash
+APIBASEURL=https://router.huggingface.co/v1
+MODELNAME=<your-model-id>
+HFTOKEN=<your-token>
+```
+
 Run it with:
 
 ```bash
@@ -260,6 +268,7 @@ Then verify:
 Do not commit or publish:
 
 - `HF_TOKEN`
+- `HFTOKEN`
 - `OPENAI_API_KEY`
 - `API_KEY`
 - `kaggle.json`
@@ -269,7 +278,9 @@ Do not commit or publish:
 Safe to keep public:
 
 - `API_BASE_URL`
+- `APIBASEURL`
 - `MODEL_NAME`
+- `MODELNAME`
 - `openenv.yaml`
 - `fraudshield_baseline_results.json`
 - `data/fraudshield_cases.json`
