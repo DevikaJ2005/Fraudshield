@@ -1,5 +1,46 @@
 #!/usr/bin/env python3
-"""Competition baseline inference for FraudShield."""
+"""Competition baseline inference for FraudShield.
+
+This module provides the main entry point for evaluation:
+1. Initialize environment with frozen data snapshot
+2. Load agent (heuristic or LLM-powered)
+3. Run all 3 task difficulties
+4. Grade predictions against ground truth
+5. Save results to fraudshield_baseline_results.json
+
+Execution Modes:
+  - Heuristic (offline): No external API, deterministic fraud rules
+    Command: python inference.py
+    Result: Baseline score (easy=1.0, medium=0.877, hard=0.721, final=0.866)
+  
+  - LLM (online): Calls OpenAI-compatible API with reasoning prompt
+    Command: API_BASE_URL=... MODEL_NAME=... python inference.py
+    Result: LLM reasoning + baseline grading
+
+Output:
+  - fraudshield_baseline_results.json: Complete grading report with:
+    - Per-task scores (easy, medium, hard)
+    - Final weighted score
+    - Metadata (agent, model, seed, data snapshot)
+    - Prediction traces (for replay/audit)
+
+Logging:
+  - INFO: Task progress, scores, file paths
+  - ERROR: Data load failures, agent exceptions
+  - EXCEPTION: Full traceback if inference fails
+
+Usage Examples:
+  # Heuristic baseline (no API needed)
+  python inference.py
+
+  # With LLM (requires API credentials)
+  export API_BASE_URL=https://router.huggingface.co/v1
+  export MODEL_NAME=meta-llama/Llama-2-7b-chat-hf
+  python inference.py
+
+  # In Docker (PATH already set)
+  docker run -e API_BASE_URL=... -e MODEL_NAME=... fraudshield:v0.2.0
+"""
 
 from __future__ import annotations
 
@@ -20,7 +61,21 @@ RESULTS_FILE = "fraudshield_baseline_results.json"
 
 
 def get_env(*names: str, default: str = "") -> str:
-    """Return the first non-empty environment variable from a list of aliases."""
+    """Return the first non-empty environment variable from a list of aliases.
+    
+    Tries multiple variable names in order (useful for supporting different naming conventions).
+    
+    Args:
+        *names: Environment variable names to check (in order of preference).
+        default: Fallback value if none of the names are set.
+    
+    Returns:
+        The first non-empty value found, or default if none matched.
+    
+    Example:
+        api_url = get_env("API_BASE_URL", "APIBASEURL", default="https://router.huggingface.co/v1")
+        model = get_env("MODEL_NAME", "MODELNAME", default="meta-llama/Llama-2-7b")
+    """
 
     for name in names:
         value = os.getenv(name)
@@ -30,7 +85,38 @@ def get_env(*names: str, default: str = "") -> str:
 
 
 def run_task(env: FraudShieldEnvironment, agent: object, task_name: str) -> Tuple[List[str], List[str], List[float]]:
-    """Run one task episode and capture the full prediction trace."""
+    """Run one task episode and capture the full prediction trace.
+    
+    This function executes a complete episode for a single task difficulty,
+    collecting all predictions, confidences, and ground truth labels.
+    
+    Args:
+        env: FraudShieldEnvironment instance (with data already loaded).
+        agent: Agent object with decide(observation) method.
+        task_name: Task difficulty ("easy", "medium", or "hard").
+    
+    Returns:
+        Tuple of 3 lists:
+        - predictions: List[str] of decisions ("fraud" or "legitimate")
+        - ground_truth: List[str] of true labels
+        - confidences: List[float] of confidence values [0.0, 1.0]
+    
+    Workflow:
+        1. Call env.reset(task_name) to initialize episode
+        2. Loop: agent.decide(obs) → env.step(action) → next obs
+        3. Log progress each step
+        4. Collect all decisions and ground truth
+        5. Return predictions for grading
+    
+    Logging:
+        - Task header with agent name
+        - Progress every 10 steps (or at first/last)
+        - Final accuracy and cumulative reward
+    
+    Example:
+        preds, labels, confs = run_task(env, agent, "easy")
+        print(f"Accuracy: {sum(p == l for p, l in zip(preds, labels)) / len(preds)}")
+    """
 
     logger.info("%s", "=" * 72)
     logger.info("Running %s task with %s", task_name.upper(), getattr(agent, "name", agent.__class__.__name__))
@@ -70,7 +156,42 @@ def run_task(env: FraudShieldEnvironment, agent: object, task_name: str) -> Tupl
 
 
 def main() -> Dict[str, object]:
-    """Run the baseline across all tasks and persist the report."""
+    """Run the baseline across all tasks and persist the report.
+    
+    This is the main entry point. It orchestrates the complete evaluation:
+    1. Create environment and load frozen data snapshot
+    2. Build agent (heuristic or LLM-powered)
+    3. Run easy/medium/hard tasks sequentially
+    4. Grade all predictions
+    5. Save results to fraudshield_baseline_results.json
+    
+    Returns:
+        Grading report dict with keys:
+        - easy: {score, predictions, ground_truth, confidences}
+        - medium: {...}
+        - hard: {...}
+        - final_score: Weighted average across all tasks
+        - metadata: {agent_name, model_name, seed, data_snapshot, tasks}
+    
+    Error Handling:
+        - Exits with code 1 if data fails to load
+        - Exits with code 1 if inference crashes
+        - Logs full exception traceback
+    
+    Side Effects:
+        - Writes fraudshield_baseline_results.json to cwd
+        - Logs task progress and scores
+    
+    Environment Variables:
+        - API_BASE_URL: OpenAI-compatible API endpoint (for LLM mode)
+        - MODEL_NAME: Model to use (for LLM mode)
+        - (Both optional; heuristic mode runs offline if not set)
+    
+    Example:
+        result = main()
+        print(f"Final score: {result['final_score']:.4f}")
+        print(f"Easy: {result['easy']['score']:.4f}")
+    """
 
     logger.info("%s", "=" * 72)
     logger.info("FraudShield baseline inference")
@@ -128,7 +249,7 @@ def main() -> Dict[str, object]:
     return grading_result
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     try:
         main()
     except Exception as exc:

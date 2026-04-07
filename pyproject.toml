@@ -5,12 +5,33 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fraudshield"
 version = "0.2.0"
-description = "OpenEnv fraud review environment built from a frozen public-data snapshot"
+description = "Production-grade OpenEnv environment for e-commerce fraud detection. Simulates marketplace fraud review with deterministic graders, dense rewards, and reproducible baselines."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
     { name = "Devika J", email = "devikaj2005@gmail.com" },
+]
+keywords = [
+    "openenv",
+    "reinforcement-learning",
+    "fraud-detection",
+    "agent-evaluation",
+    "e-commerce",
+    "environment",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
     "fastapi>=0.115.0",
@@ -37,6 +58,8 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/DevikaJ2005/fraudshield"
 Repository = "https://github.com/DevikaJ2005/fraudshield.git"
+Documentation = "https://github.com/DevikaJ2005/fraudshield/blob/main/README.md"
+BugTracker = "https://github.com/DevikaJ2005/fraudshield/issues"
 
 [project.scripts]
 server = "server.app:main"

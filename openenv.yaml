@@ -1,7 +1,11 @@
 name: fraudshield
 version: 0.2.0
-description: OpenEnv environment for marketplace fraud review built from a frozen public-data snapshot.
+description: |
+  Production-grade OpenEnv environment for e-commerce fraud detection.
+  Simulates marketplace fraud review with 3 difficulty levels (easy/medium/hard),
+  deterministic graders, business-cost-sensitive rewards, and reproducible baselines.
 author: Devika J
+email: devikaj2005@gmail.com
 
 environment:
   class: FraudShieldEnvironment
@@ -21,17 +25,29 @@ reward:
 
 tasks:
   - name: easy
-    description: Clear-cut fraud reviews with strong single-transaction indicators.
+    description: |
+      Clear-cut fraud detection with strong single-transaction indicators.
+      Agents should achieve 95%+ accuracy by identifying obvious red flags.
+      Difficulty: Foundation level - rewards strong pattern recognition.
     difficulty: easy
     num_transactions: 24
+    baseline_score: 1.0000
   - name: medium
-    description: Mixed-signal reviews where confidence calibration and tradeoffs matter.
+    description: |
+      Mixed-signal reviews where confidence calibration and risk tradeoffs matter.
+      No single feature is decisive; agents must weigh multiple indicators.
+      Difficulty: Intermediate - rewards balanced decision-making.
     difficulty: medium
     num_transactions: 36
+    baseline_score: 0.8773
   - name: hard
-    description: Coordinated fraud rings and legitimate flash-sale edge cases with overlapping signals.
+    description: |
+      Coordinated fraud rings and legitimate flash-sale edge cases with overlapping signals.
+      Complex patterns require network-level analysis and tolerance for ambiguity.
+      Difficulty: Advanced - rewards sophisticated reasoning.
     difficulty: hard
     num_transactions: 48
+    baseline_score: 0.7206
 
 metadata:
   created: "2026-03-30"

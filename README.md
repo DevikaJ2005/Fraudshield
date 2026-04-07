@@ -1,6 +1,16 @@
-# FraudShield
+# FraudShield 🛡️
 
-FraudShield is an OpenEnv environment for marketplace fraud review. An agent inspects one transaction at a time, predicts whether it is `fraud` or `legitimate`, and receives dense reward shaped by business impact, confidence calibration, and correctness.
+**Production-grade OpenEnv environment for e-commerce fraud detection**
+
+FraudShield simulates real marketplace fraud review workflows. Agents inspect transactions and predict fraud/legitimate status, receiving dense rewards shaped by business impact, confidence calibration, and classification accuracy.
+
+**Key Features:**
+- ✅ Real-world task (marketplace fraud detection)
+- ✅ Deterministic graders with 3 difficulty levels (easy → medium → hard)
+- ✅ Dense reward function (business-cost sensitive)
+- ✅ Frozen snapshot (reproducible, 108 cases)
+- ✅ Production-ready (Docker + FastAPI)
+- ✅ Baseline scores verified (0.8660 final score)
 
 The environment is grounded in real public fraud data, but it does not fetch live records during `reset()` or `step()`. Instead, it uses a frozen, versioned snapshot stored in `data/fraudshield_cases.json`. That gives you real-world grounding with deterministic grading, fast Docker startup, and reproducible evaluation on Hugging Face Spaces.
 
@@ -181,6 +191,93 @@ fraudshield/
 `-- pyproject.toml
 ```
 
+## Quick Start
+
+### 1. Installation
+
+```bash
+# Install dependencies
+pip install -e .
+
+# (Optional) For local data refresh
+pip install -e ".[dev]"
+```
+
+### 2. Run Baseline Locally
+
+```bash
+# Heuristic agent (no API call)
+python inference.py
+
+# Expected output: fraudshield_baseline_results.json with score ≈ 0.8660
+```
+
+### 3. Deploy with Docker
+
+```bash
+# Build
+docker build . -t fraudshield:v0.2.0
+
+# Run
+docker run -p 7860:7860 fraudshield:v0.2.0
+
+# Test
+curl http://localhost:7860/health
+```
+
+### 4. Hugging Face Space Deployment
+
+1. Create Space on [huggingface.co/spaces](https://huggingface.co/spaces)
+2. Select "Docker" runtime
+3. Connect your GitHub repository
+4. HF automatically detects Dockerfile and deploys
+5. Set environment variables (optional for LLM mode):
+   ```
+   API_BASE_URL=https://router.huggingface.co/v1
+   MODEL_NAME=<your-model>
+   HF_TOKEN=<your-token>
+   ```
+
+## API Examples
+
+### Reset Environment
+
+```bash
+curl -X POST http://localhost:7860/reset \
+  -H "Content-Type: application/json" \
+  -d '{"task":"easy"}'
+```
+
+### Submit Action
+
+```bash
+curl -X POST http://localhost:7860/step \
+  -H "Content-Type: application/json" \
+  -d '{
+    "transaction_id": "txn_001",
+    "decision": "fraud",
+    "confidence": 0.85,
+    "reasoning": "High risk indicators: new seller, price anomaly"
+  }'
+```
+
+### Get Episode State
+
+```bash
+curl http://localhost:7860/state | jq .
+```
+
+## Rebuilding Data Snapshot (Optional)
+
+To refresh the frozen snapshot from the public Kaggle dataset:
+
+```bash
+pip install -e ".[data]"
+python download_kaggle_data.py
+```
+
+Note: If `data/creditcard.csv` exists, the script rebuilds without re-downloading.
+
 ## Setup
 
 Install the project:
@@ -188,15 +285,6 @@ Install the project:
 ```bash
 python -m pip install -e .
 ```
-
-If you want to rebuild the frozen snapshot from the public source CSV:
-
-```bash
-python -m pip install -e ".[data]"
-python download_kaggle_data.py
-```
-
-If `data/creditcard.csv` already exists locally, the script rebuilds the snapshot without needing to download again.
 
 ## Running locally
 

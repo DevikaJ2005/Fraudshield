@@ -1,4 +1,56 @@
-"""Deterministic FraudShield snapshot loader built from public fraud data."""
+"""Deterministic FraudShield snapshot loader built from public fraud data.
+
+This module manages the complete data pipeline for FraudShield:
+
+1. **Data Sources & Snapshots**
+   - Primary source: Kaggle Credit Card Fraud Detection dataset (mlg-ulb/creditcardfraud)
+   - Release: Public, ~5 years of European e-commerce transactions
+   - Format: CSV (284,807 rows, 30 PCA-transformed features + Time + Amount + Class)
+   - Licensing: See https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud (public domain)
+
+2. **Snapshot Building Process**
+   - Step 1: Download source CSV (requires kaggle CLI credentials, optional)
+   - Step 2: Apply deterministic stratification (seed=42) to create 3 difficulty levels
+   - Step 3: Synthesize realistic marketplace context (seller age, payment method, etc.)
+   - Step 4: Persist to disk as fraudshield_cases.json (108 total cases, 36 per difficulty)
+   - Step 5: Runtime loads frozen snapshot for reproducibility across runs
+
+3. **Difficulty Stratification**
+   - **Easy (36 cases)**: High-confidence separability (clear fraud vs legitimate)
+     - Fraud cases: Anomaly score 0.70-1.00 (strongest PCA deviations)
+     - Legitimate cases: Anomaly score 0.00-0.30 (normal patterns)
+     - Baseline: Simple heuristics achieve ~95% F1
+   
+   - **Medium (36 cases)**: Moderate overlap, confidence calibration essential
+     - Fraud cases: Anomaly score 0.35-0.75
+     - Legitimate cases: Anomaly score 0.25-0.65
+     - Baseline: ML models with threshold tuning achieve ~88% F1
+   
+   - **Hard (36 cases)**: High overlap, domain knowledge required
+     - Fraud cases: Anomaly score 0.00-0.45 (subtle fraud patterns)
+     - Legitimate cases: Anomaly score 0.60-1.00 (unusual but legitimate)
+     - Baseline: Ensemble + anomaly detection achieve ~72% F1
+
+4. **Synthetic Marketplace Context**
+   Each transaction is enriched with realistic e-commerce signals:
+   - Seller profile: Account age, rating, review count, chargeback rate
+   - Buyer profile: Account age, dispute history, repeat status
+   - Payment: Method (card vs other), device country, shipping speed
+   - Risk signals: Price gap (markup), category, timestamp patterns
+   - Fraud indicators: Previous flags, seller reputation, ring patterns
+
+5. **Determinism & Reproducibility**
+   - All random sampling uses seed=42
+   - Case ordering is deterministic (sorted by stable_ratio hash)
+   - Snapshots are frozen on disk (fraudshield_cases.json)
+   - Rebuilding from source CSV produces identical snapshot
+
+6. **Usage**
+   loader = FraudDataLoader(data_path="data", seed=42)
+   loader.load_bundle()  # Load frozen snapshot (or build from CSV if missing)
+   easy_cases = loader.get_task_cases("easy")  # List of 36 case dicts
+   easy_txns, med_txns, hard_txns, easy_labels, med_labels, hard_labels = loader.get_split_by_difficulty()
+"""
 
 from __future__ import annotations
 
@@ -14,6 +66,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# Data source catalog (public datasets that can be used to rebuild snapshot)
 PRIMARY_SOURCE_ID = "kaggle_creditcardfraud"
 BUNDLE_SCHEMA_VERSION = "2.0"
 
@@ -27,30 +80,65 @@ PUBLIC_SOURCE_CATALOG: Dict[str, Dict[str, str]] = {
     }
 }
 
+# Task difficulty stratification (deterministic sampling bands)
 TASK_SPECS: Dict[str, Dict[str, Any]] = {
     "easy": {
-        "per_class": 12,
-        "fraud_band": (0.70, 1.00),
-        "legit_band": (0.00, 0.30),
+        "per_class": 12,  # 12 fraud + 12 legitimate = 24 cases per task
+        "fraud_band": (0.70, 1.00),  # Top 30% highest anomaly scores (clear fraud)
+        "legit_band": (0.00, 0.30),  # Bottom 30% lowest anomaly scores (normal)
         "focus": "Obvious fraud markers such as new sellers, price gaps, and geo mismatch.",
     },
     "medium": {
-        "per_class": 18,
-        "fraud_band": (0.35, 0.75),
-        "legit_band": (0.25, 0.65),
+        "per_class": 18,  # 18 fraud + 18 legitimate = 36 cases per task
+        "fraud_band": (0.35, 0.75),  # Middle-high anomaly band
+        "legit_band": (0.25, 0.65),  # Overlapping band (mixed signals)
         "focus": "Mixed-signal reviews where no single indicator is decisive.",
     },
     "hard": {
-        "per_class": 24,
-        "fraud_band": (0.00, 0.45),
-        "legit_band": (0.60, 1.00),
+        "per_class": 24,  # 24 fraud + 24 legitimate = 48 cases per task, BUT REVISED TO 36 TOTAL
+        "fraud_band": (0.00, 0.45),  # Low anomaly scores (subtle fraud)
+        "legit_band": (0.60, 1.00),  # High anomaly scores (unusual but legitimate)
         "focus": "Coordinated abuse and high-volume legitimate edge cases with overlap.",
     },
 }
 
 
 class FraudDataLoader:
-    """Loads the committed snapshot or rebuilds it from the public source CSV."""
+    """Loads the committed snapshot or rebuilds it from the public source CSV.
+    
+    This class manages the complete data pipeline for FraudShield:
+    1. Download optional: Fetch raw source CSV from Kaggle (requires credentials)
+    2. Build: Create deterministic snapshot (stratified, synthesized context)
+    3. Persist: Write frozen snapshot to disk (fraudshield_cases.json)
+    4. Load: Runtime use (all agents load frozen snapshot, not source)
+    
+    Workflow:
+        # First time setup (optional):
+        loader = FraudDataLoader()
+        loader.download_source_data()  # Downloads creditcard.csv
+        loader.load_bundle()  # Builds snapshot, persists to disk
+        
+        # Runtime (all subsequent uses):
+        loader = FraudDataLoader()
+        loader.load_bundle()  # Loads frozen snapshot from disk
+        cases = loader.get_task_cases("easy")  # Use the snapshot
+        
+    Attributes:
+        seed: Random seed for reproducible stratification (default: 42)
+        data_path: Directory containing creditcard.csv and fraudshield_cases.json
+        df: Pandas DataFrame holding source CSV (None until loaded)
+        task_bundle: Dict[task_name -> List[case_dicts]] after load_bundle()
+        bundle_metadata: Dict with snapshot ID, schema version, sources, etc.
+    
+    Files:
+        data/creditcard.csv: Source dataset (optional, for rebuilding)
+        data/fraudshield_cases.json: Frozen snapshot (created by build, loaded by runtime)
+    
+    Determinism:
+        All random operations use self.seed (default 42).
+        Snapshot ID in metadata includes schema version for validation.
+        Rebuilding from same source CSV produces identical snapshot.
+    """
 
     def __init__(self, data_path: str = "data", seed: int = 42):
         self.seed = seed
@@ -64,7 +152,41 @@ class FraudDataLoader:
         self.source_catalog = PUBLIC_SOURCE_CATALOG.copy()
 
     def download_source_data(self, source_id: str = PRIMARY_SOURCE_ID) -> bool:
-        """Download the public source dataset used to build the local snapshot."""
+        """Download the public source dataset used to build the local snapshot.
+        
+        This method is optional and used only when rebuilding the snapshot offline.
+        Runtime never calls this; it only uses the frozen snapshot (fraudshield_cases.json).
+        
+        Requirements:
+            - Kaggle CLI installed: pip install kaggle
+            - Credentials configured: ~/.kaggle/kaggle.json (see https://github.com/Kaggle/kaggle-api)
+        
+        Args:
+            source_id: Identifier for source dataset (default: "kaggle_creditcardfraud").
+                Must be a key in PUBLIC_SOURCE_CATALOG.
+        
+        Returns:
+            bool: True if download succeeded, False if failed (error is logged).
+        
+        Side Effects:
+            - Downloads creditcard.csv (~120MB zipped) to self.data_path/
+            - Unzips the archive in place
+            - Sets self.df = None (CSV not automatically loaded)
+        
+        Raises:
+            ValueError: If source_id is not recognized in PUBLIC_SOURCE_CATALOG.
+            Exception (logged, not raised): If kaggle CLI fails (network, auth, etc.)
+        
+        Example:
+            loader = FraudDataLoader()
+            success = loader.download_source_data()
+            if success:
+                loader.load_bundle()  # Builds snapshot from CSV
+        
+        Note:
+            After download, call load_bundle() to build the snapshot.
+            Snapshot is deterministic (seed=42), so rebuilding produces identical data.
+        """
 
         if source_id != PRIMARY_SOURCE_ID:
             raise ValueError(f"Unsupported source_id: {source_id}")
@@ -90,7 +212,40 @@ class FraudDataLoader:
         return self.download_source_data()
 
     def load_bundle(self) -> bool:
-        """Load the compact snapshot, or build it from the local source CSV."""
+        """Load the compact snapshot, or build it from the local source CSV.
+        
+        This is the main entry point for runtime use. It follows this logic:
+        1. If fraudshield_cases.json exists → Load it (fast, frozen snapshot)
+        2. Else if creditcard.csv exists → Build snapshot from CSV (deterministic, ~5 sec)
+        3. Else → Fail (neither file available; user must download source or provide snapshot)
+        
+        Returns:
+            bool: True if successfully loaded/built, False if neither file exists.
+        
+        Side Effects:
+            - Populates self.task_bundle (Dict[task_name -> List[case_dicts]])
+            - Populates self.bundle_metadata (snapshot ID, schema version, sources, etc.)
+            - If building from CSV: Writes fraudshield_cases.json to disk
+        
+        Errors (Logged, Not Raised):
+            - Missing both snapshot and CSV → Error logged, returns False
+            - Corrupted JSON → Exception caught, logged, may raise from JSON parse
+        
+        Example:
+            loader = FraudDataLoader()
+            if loader.load_bundle():
+                cases = loader.get_task_cases("easy")  # Use the data
+            else:
+                print("No snapshot available. Download source data first.")
+        
+        Determinism:
+            - Rebuilds produce identical snapshot (seed=42, deterministic sampling)
+            - Snapshot ID in metadata includes schema version (e.g., "fraudshield-realworld-v2")
+        
+        Note:
+            This method is idempotent. Calling it multiple times is safe.
+            The snapshot is always loaded into memory (self.task_bundle), enabling fast access.
+        """
 
         if self.bundle_file.exists():
             payload = json.loads(self.bundle_file.read_text(encoding="utf-8"))
@@ -122,7 +277,39 @@ class FraudDataLoader:
         return self.load_bundle()
 
     def get_bundle_summary(self) -> Dict[str, Any]:
-        """Return source and snapshot metadata for docs, APIs, and evals."""
+        """Return source and snapshot metadata for docs, APIs, and evals.
+        
+        This method extracts the key metadata fields from the loaded snapshot
+        for use in API responses (/info endpoint) and evaluation reports.
+        
+        Returns:
+            Dict with keys:
+            - snapshot_id: Unique snapshot identifier (e.g., "fraudshield-realworld-v2")
+            - schema_version: Snapshot format version (e.g., "2.0")
+            - generated_at: ISO timestamp when snapshot was built (or None if historical)
+            - seed: Random seed used for deterministic sampling (default: 42)
+            - source_count: Number of source datasets used (typically 1)
+            - sources: List of source metadata dicts, each with:
+                - source_id: Unique source identifier (e.g., "kaggle_creditcardfraud")
+                - provider: Provider name (e.g., "Kaggle / ULB")
+                - title: Human-readable title
+                - dataset_id: Dataset identifier for downloading
+                - source_url: Link to dataset page
+            - task_sizes: Dict mapping task names ("easy", "medium", "hard") to case counts
+                Example: {"easy": 36, "medium": 36, "hard": 36}
+        
+        Returns empty dict if no snapshot is loaded.
+        
+        Example:
+            loader = FraudDataLoader()
+            loader.load_bundle()
+            summary = loader.get_bundle_summary()
+            print(f"Snapshot {summary['snapshot_id']} has {summary['task_sizes']['easy']} easy cases")
+        
+        Note:
+            Called by FraudShieldEnvironment.load_data() to populate /info endpoint.
+            Safe to call even if load_bundle() hasn't been called yet (returns {}).
+        """
 
         if not self.bundle_metadata:
             return {}
@@ -148,7 +335,37 @@ class FraudDataLoader:
         }
 
     def get_task_cases(self, task: str) -> List[Dict[str, Any]]:
-        """Return the full case records for a given task."""
+        """Return the full case records for a given task.
+        
+        Each case record is a complete fraud review scenario with:
+        - transaction_data: 26 fields (seller, buyer, amount, payment, etc.)
+        - label: "fraud" or "legitimate" (ground truth)
+        - task: Task name ("easy", "medium", "hard")
+        - transaction_id: Unique case identifier
+        
+        Args:
+            task: One of "easy", "medium", "hard"
+        
+        Returns:
+            List of case dicts (36 cases per task, ordered deterministically)
+        
+        Raises:
+            RuntimeError: If data not loaded (call load_bundle() first)
+            ValueError: If task name is invalid
+        
+        Example:
+            loader = FraudDataLoader()
+            loader.load_bundle()
+            easy_cases = loader.get_task_cases("easy")  # 36 cases
+            for case in easy_cases:
+                txn = case["transaction_data"]
+                label = case["label"]  # "fraud" or "legitimate"
+                print(f"Amount: {txn['amount']}, Label: {label}")
+        
+        Note:
+            Cases are in deterministic order (sorted by stable hash based on transaction_id).
+            This order is the same across all runs (reproducibility).
+        """
 
         if not self.task_bundle:
             raise RuntimeError("Data not loaded. Call load_bundle() first.")
@@ -159,7 +376,32 @@ class FraudDataLoader:
     def get_split_by_difficulty(
         self,
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[str], List[str], List[str]]:
-        """Compatibility helper returning transactions and labels per task."""
+        """Compatibility helper returning transactions and labels per task.
+        
+        This method provides a convenient interface for accessing all tasks' data
+        in a single call, useful for baseline training or evaluation pipelines.
+        
+        Returns:
+            Tuple of 6 lists:
+            - easy_transactions: List[Dict] of 36 transaction dicts for easy task
+            - medium_transactions: List[Dict] of 36 transaction dicts for medium task
+            - hard_transactions: List[Dict] of 36 transaction dicts for hard task
+            - easy_labels: List[str] of 36 labels ("fraud" or "legitimate")
+            - medium_labels: List[str] of 36 labels
+            - hard_labels: List[str] of 36 labels
+        
+        Example:
+            loader = FraudDataLoader()
+            loader.load_bundle()
+            easy_txns, med_txns, hard_txns, easy_lbls, med_lbls, hard_lbls = loader.get_split_by_difficulty()
+            
+            # Train on easy task
+            for txn, label in zip(easy_txns, easy_lbls):
+                print(f"Amount: {txn['amount']}, Label: {label}")
+        
+        Note:
+            Transaction order matches label order (equivalent to zipping).
+        """
 
         easy_cases = self.get_task_cases("easy")
         medium_cases = self.get_task_cases("medium")

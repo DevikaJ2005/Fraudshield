@@ -1,16 +1,25 @@
+# Git
 .git
 .gitignore
 .github/
+
+# Python cache
 __pycache__
 *.pyc
 *.pyo
 *.pyd
 .Python
+
+# Virtual environments
 env/
 venv/
 .venv
+
+# Package management
 pip-log.txt
 pip-delete-this-directory.txt
+
+# Testing
 .tox/
 .coverage
 .coverage.*
@@ -18,15 +27,23 @@ pip-delete-this-directory.txt
 nosetests.xml
 coverage.xml
 *.cover
-*.log
-.git
-.gitignore
-.dockerignore
+.pytest_cache/
+
+# Development
 .env
 .env.local
 *.swp
 .DS_Store
+.dockerignore
+
+# Outputs (keep data/ for snapshot)
 outputs/
-data/
-*.json
-.pytest_cache/
+*.log
+
+# Exclude result artifacts but keep snapshot data
+fraudshield_baseline_results.json
+fraudshield_kaggle_results.json
+
+# Documentation (local reference)
+*.md
+!README.md
