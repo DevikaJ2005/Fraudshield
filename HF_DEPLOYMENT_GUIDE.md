@@ -1,85 +1,99 @@
-#!/bin/bash
-# FraudShield HuggingFace Spaces Deployment Script
-# Deploy to https://huggingface.co/spaces/DevikaJ2005/fraudshield
+# FraudShield Hugging Face Deployment Guide
 
-echo "=========================================================================="
-echo "FraudShield HuggingFace Spaces Deployment"
-echo "=========================================================================="
-echo ""
-echo "Prerequisites:"
-echo "  ✓ HF username: DevikaJ2005"
-echo "  ✓ GitHub repo: https://github.com/DevikaJ2005/Fraudshield"
-echo "  ✓ Docker configured"
-echo "  ✓ HF token configured (if needed)"
-echo ""
-echo "=========================================================================="
-echo "DEPLOYMENT OPTIONS"
-echo "=========================================================================="
-echo ""
-echo "Option 1: GitHub Sync (RECOMMENDED - Automatic Updates)"
-echo "  1. Go to https://huggingface.co/new-space"
-echo "  2. Select 'Docker' as SDK"
-echo "  3. In 'Advanced options', enable 'GitHub sync'"
-echo "  4. Connect your GitHub account"
-echo "  5. Select repository: DevikaJ2005/Fraudshield"
-echo "  6. Create Space"
-echo "  → HF will automatically deploy and redeploy on every GitHub push"
-echo ""
-echo "Option 2: Direct Git Push (Manual - One-time deployment)"
-echo "  1. Create new Space at https://huggingface.co/new-space"
-echo "  2. Copy the provided git URL"
-echo "  3. Run:"
-echo "     git remote add space <HF_GIT_URL>"
-echo "     git push space main"
-echo ""
-echo "=========================================================================="
-echo "EXPECTED DEPLOYMENT FLOW"
-echo "=========================================================================="
-echo ""
-echo "1. HF builds Docker image from Dockerfile"
-echo "   - Base: python:3.11-slim"
-echo "   - Entry point: server.app (FastAPI)"
-echo "   - Port: 7860"
-echo ""
-echo "2. On startup:"
-echo "   - Data snapshot loads (data/fraudshield_cases.json)"
-echo "   - FastAPI server initializes"
-echo "   - Health check endpoint ready"
-echo ""
-echo "3. Available endpoints:"
-echo "   - GET  / (root)"
-echo "   - GET  /health"
-echo "   - GET  /info"
-echo "   - GET  /tasks"
-echo "   - POST /reset"
-echo "   - POST /step"
-echo "   - GET  /state"
-echo ""
-echo "=========================================================================="
-echo "VERIFICATION"
-echo "=========================================================================="
-echo ""
-echo "After deployment, verify:"
-echo "  1. Health check: GET https://YOUR_SPACE_URL/health"
-echo "  2. Info: GET https://YOUR_SPACE_URL/info"
-echo "  3. Tasks: GET https://YOUR_SPACE_URL/tasks"
-echo ""
-echo "Expected responses:"
-echo "  - /health returns 200 with status='healthy'"
-echo "  - /info returns 200 with tasks, data snapshot, version"
-echo "  - /tasks returns 200 with 3 tasks (easy, medium, hard)"
-echo ""
-echo "=========================================================================="
-echo "ENVIRONMENT VARIABLES (if needed)"
-echo "=========================================================================="
-echo ""
-echo "Optional - for LLM mode:"
-echo "  - API_BASE_URL: OpenAI-compatible endpoint"
-echo "  - MODEL_NAME: Model to use"
-echo "  - HF_TOKEN: HuggingFace token (if using HF models)"
-echo ""
-echo "urrent defaults:"
-echo "  - API_BASE_URL: https://router.huggingface.co/v1"
-echo "  - MODEL_NAME: (heuristic-baseline if not set)"
-echo ""
-echo "=========================================================================="
+FraudShield is packaged as a Docker Space and is ready to deploy to:
+
+- GitHub: `https://github.com/DevikaJ2005/Fraudshield`
+- Hugging Face Space: `https://huggingface.co/spaces/DevikaJ2005/fraudshield-1`
+
+## What gets deployed
+
+The Space runs:
+
+- `python -m server.app`
+- FastAPI on port `7860`
+- frozen snapshot data from `data/fraudshield_cases.json`
+
+The HTTP runtime exposes:
+
+- `GET /health`
+- `POST /reset`
+- `POST /step`
+- `GET /state`
+- `GET /info`
+- `GET /tasks`
+- `GET /metadata`
+- `GET /schema`
+- `POST /mcp`
+
+## Deployment options
+
+### Option 1: GitHub sync
+
+Recommended for hackathon iteration speed.
+
+1. Create a new Hugging Face Space.
+2. Choose `Docker`.
+3. Enable GitHub sync.
+4. Connect `DevikaJ2005/Fraudshield`.
+5. Let Hugging Face rebuild on every push.
+
+### Option 2: Direct git push
+
+If you prefer manual deployment:
+
+```bash
+git remote add space https://huggingface.co/spaces/DevikaJ2005/fraudshield-1
+git push space main
+```
+
+## Local preflight
+
+Run these before pushing:
+
+```bash
+python inference.py
+python -X utf8 validate_api.py
+python -m openenv.cli validate .
+python -m server.app
+```
+
+Then verify:
+
+```bash
+curl http://127.0.0.1:7860/health
+curl http://127.0.0.1:7860/metadata
+curl http://127.0.0.1:7860/schema
+```
+
+The live server should also pass:
+
+```bash
+python -m openenv.cli validate --url http://127.0.0.1:7860
+```
+
+## Optional environment variables
+
+The server itself does not require LLM credentials to start.
+
+`inference.py` supports proxy-based LLM evaluation when these are available:
+
+```bash
+API_BASE_URL=https://router.huggingface.co/v1
+API_KEY=<optional-local-key>
+MODEL_NAME=<optional-model>
+```
+
+Aliases accepted by the code:
+
+- `APIBASEURL`
+- `APIKEY`
+- `MODELNAME`
+- `HF_TOKEN`
+- `HFTOKEN`
+- `OPENAI_API_KEY`
+
+## Deployment notes
+
+- Runtime evaluation uses only the committed snapshot.
+- The richer investigation workflow is available through both REST and MCP.
+- The submission-safe inference path remains deterministic when no API credentials are injected.

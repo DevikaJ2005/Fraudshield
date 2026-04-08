@@ -1,9 +1,10 @@
 name: fraudshield
-version: 0.2.0
+version: 0.3.0
 description: |
-  Production-grade OpenEnv environment for e-commerce fraud detection.
-  Simulates marketplace fraud review with 3 difficulty levels (easy/medium/hard),
-  deterministic graders, business-cost-sensitive rewards, and reproducible baselines.
+  Agentic marketplace fraud investigation environment for OpenEnv.
+  Agents can either make a final fraud decision or spend limited investigation
+  budget to reveal extra evidence before deciding, with deterministic grading and
+  business-cost-sensitive rewards.
 author: Devika J
 email: devikaj2005@gmail.com
 
@@ -26,16 +27,16 @@ reward:
 tasks:
   - name: easy
     description: |
-      Clear-cut fraud detection with strong single-transaction indicators.
-      Agents should achieve 95%+ accuracy by identifying obvious red flags.
-      Difficulty: Foundation level - rewards strong pattern recognition.
+      Low-noise triage cases with strong single-transaction indicators.
+      Best agents decide quickly and only investigate when a high-value signal conflicts.
+      Difficulty: Foundation level - rewards crisp pattern recognition.
     difficulty: easy
     num_transactions: 24
-    baseline_score: 1.0000
+    baseline_score: 0.9999
   - name: medium
     description: |
-      Mixed-signal reviews where confidence calibration and risk tradeoffs matter.
-      No single feature is decisive; agents must weigh multiple indicators.
+      Mixed-signal reviews where confidence calibration and selective investigation matter.
+      No single feature is decisive; agents must weigh multiple indicators and limited evidence budget.
       Difficulty: Intermediate - rewards balanced decision-making.
     difficulty: medium
     num_transactions: 36
@@ -43,8 +44,8 @@ tasks:
   - name: hard
     description: |
       Coordinated fraud rings and legitimate flash-sale edge cases with overlapping signals.
-      Complex patterns require network-level analysis and tolerance for ambiguity.
-      Difficulty: Advanced - rewards sophisticated reasoning.
+      Complex patterns benefit from network-level analysis and tolerance for ambiguity.
+      Difficulty: Advanced - rewards sophisticated multi-step reasoning.
     difficulty: hard
     num_transactions: 48
     baseline_score: 0.7206

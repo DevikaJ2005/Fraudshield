@@ -7,7 +7,7 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from models import DecisionEnum, FraudCheckAction
+from models import ActionTypeEnum, DecisionEnum, FraudCheckAction, InvestigationTargetEnum
 
 try:  # pragma: no cover - optional in local smoke tests
     from openai import OpenAI
@@ -35,7 +35,7 @@ class HeuristicFraudDetectionAgent:
 
     name = "heuristic-baseline"
 
-    def decide(self, observation) -> FraudCheckAction:
+    def _analyze_observation(self, observation) -> tuple[int, list[str], Dict[str, Any]]:
         data = observation.transaction_data
         history = observation.historical_context or {}
         risk_points = 0
@@ -75,6 +75,16 @@ class HeuristicFraudDetectionAgent:
             risk_points -= 1
             reasons.append("seller has strong review and chargeback history")
 
+        diagnostics = {
+            "amount_gap": amount_gap,
+            "device_mismatch": device_mismatch,
+            "cluster_alert_score": history.get("cluster_alert_score", 0.0),
+        }
+        return risk_points, reasons, diagnostics
+
+    def decide(self, observation) -> FraudCheckAction:
+        risk_points, reasons, _ = self._analyze_observation(observation)
+
         threshold = {"easy": 3, "medium": 4, "hard": 5}[observation.task_name.value]
         margin = risk_points - threshold
         decision = DecisionEnum.FRAUD if margin >= 0 else DecisionEnum.LEGITIMATE
@@ -87,6 +97,114 @@ class HeuristicFraudDetectionAgent:
             confidence=round(confidence, 2),
             reasoning=reasoning[:500],
         )
+
+
+class AgenticHeuristicFraudDetectionAgent(HeuristicFraudDetectionAgent):
+    """Budget-aware heuristic agent that uses investigation actions on ambiguous cases."""
+
+    name = "agentic-heuristic"
+
+    def decide(self, observation) -> FraudCheckAction:
+        risk_points, reasons, diagnostics = self._analyze_observation(observation)
+        evidence_bonus, evidence_reasons = self._score_revealed_evidence(observation.revealed_evidence)
+        risk_points += evidence_bonus
+
+        threshold = {"easy": 3, "medium": 4, "hard": 5}[observation.task_name.value]
+        margin = risk_points - threshold
+        if self._should_investigate(observation, margin, diagnostics):
+            target = self._pick_investigation_target(observation, diagnostics)
+            if target is not None:
+                return FraudCheckAction(
+                    transaction_id=observation.transaction_id,
+                    action_type=ActionTypeEnum.INVESTIGATE,
+                    investigation_target=target,
+                    reasoning=(
+                        f"Signals are borderline for a final decision, so request {target.value} "
+                        "to reduce ambiguity before committing."
+                    )[:500],
+                )
+
+        decision = DecisionEnum.FRAUD if margin >= 0 else DecisionEnum.LEGITIMATE
+        base_confidence = 0.60 + abs(margin) * 0.08
+        if observation.revealed_evidence:
+            base_confidence += 0.06
+        confidence = min(0.97, max(0.55, base_confidence))
+        all_reasons = reasons + evidence_reasons
+        reasoning = "; ".join(all_reasons[:3]) if all_reasons else "signals remain mixed but lean legitimate"
+
+        return FraudCheckAction(
+            transaction_id=observation.transaction_id,
+            decision=decision,
+            confidence=round(confidence, 2),
+            reasoning=reasoning[:500],
+        )
+
+    @staticmethod
+    def _score_revealed_evidence(revealed_evidence: Dict[str, Dict[str, Any]]) -> tuple[int, list[str]]:
+        evidence_bonus = 0
+        reasons: list[str] = []
+
+        for target, evidence in revealed_evidence.items():
+            risk_band = evidence.get("risk_band")
+            if risk_band == "high":
+                evidence_bonus += 1
+                reasons.append(f"{target} returned a high-risk signal")
+            elif risk_band == "low":
+                evidence_bonus -= 1
+                reasons.append(f"{target} returned a low-risk signal")
+
+            details = evidence.get("details", {})
+            if details.get("proxy_suspected"):
+                evidence_bonus += 1
+                reasons.append("device intelligence suspects proxy or account sharing")
+            if details.get("issuer_velocity_alert", 0) >= 3:
+                evidence_bonus += 1
+                reasons.append("payment trace shows issuer velocity alerts")
+            if details.get("cluster_alert_score", 0.0) >= 0.75:
+                evidence_bonus += 1
+                reasons.append("network graph overlaps with a known abuse cluster")
+            if details.get("device_country_match") is True and details.get("device_reuse_accounts_24h", 0) <= 2:
+                evidence_bonus -= 1
+                reasons.append("device intelligence looks consistent with normal traffic")
+
+        return evidence_bonus, reasons
+
+    @staticmethod
+    def _should_investigate(observation, margin: int, diagnostics: Dict[str, Any]) -> bool:
+        if observation.investigation_budget_remaining <= 0 or not observation.available_investigations:
+            return False
+        if observation.revealed_evidence and abs(margin) >= 1:
+            return False
+
+        ambiguous = abs(margin) <= 1
+        high_value = observation.transaction_data.amount_percentile >= 90.0
+        suspicious_geo = diagnostics["device_mismatch"]
+        elevated_cluster = diagnostics["cluster_alert_score"] >= 0.7
+        return ambiguous or high_value or suspicious_geo or elevated_cluster
+
+    @staticmethod
+    def _pick_investigation_target(observation, diagnostics: Dict[str, Any]) -> InvestigationTargetEnum | None:
+        available = list(observation.available_investigations)
+        if not available:
+            return None
+
+        ordered_preferences = [
+            InvestigationTargetEnum.NETWORK_GRAPH if diagnostics["cluster_alert_score"] >= 0.7 else None,
+            InvestigationTargetEnum.DEVICE_INTEL if diagnostics["device_mismatch"] else None,
+            InvestigationTargetEnum.PAYMENT_TRACE
+            if observation.transaction_data.seller_chargeback_rate_30d >= 0.08
+            or observation.transaction_data.buyer_disputes_90d >= 2
+            else None,
+            InvestigationTargetEnum.FULFILLMENT_REVIEW
+            if observation.transaction_data.same_address_orders_24h >= 4
+            else None,
+            InvestigationTargetEnum.TRUST_NOTES,
+        ]
+
+        for target in ordered_preferences:
+            if target is not None and target in available:
+                return target
+        return available[0]
 
 
 class OpenAIFraudDetectionAgent:

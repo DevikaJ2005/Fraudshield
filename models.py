@@ -53,9 +53,9 @@ Usage:
 """
 
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class DecisionEnum(str, Enum):
@@ -83,6 +83,23 @@ class TaskDifficulty(str, Enum):
     EASY = "easy"
     MEDIUM = "medium"
     HARD = "hard"
+
+
+class ActionTypeEnum(str, Enum):
+    """High-level action families available to an agent."""
+
+    DECIDE = "decide"
+    INVESTIGATE = "investigate"
+
+
+class InvestigationTargetEnum(str, Enum):
+    """Evidence bundles an agent can request before making a final decision."""
+
+    DEVICE_INTEL = "device_intel"
+    PAYMENT_TRACE = "payment_trace"
+    NETWORK_GRAPH = "network_graph"
+    FULFILLMENT_REVIEW = "fulfillment_review"
+    TRUST_NOTES = "trust_notes"
 
 
 class FraudCheckAction(BaseModel):
@@ -119,19 +136,48 @@ class FraudCheckAction(BaseModel):
     model_config = ConfigDict(use_enum_values=False)
 
     transaction_id: str = Field(..., description="Unique transaction identifier.")
-    decision: DecisionEnum = Field(..., description="Predicted fraud label.")
-    confidence: float = Field(
-        ...,
+    action_type: ActionTypeEnum = Field(
+        default=ActionTypeEnum.DECIDE,
+        description="Whether the agent is making a final decision or requesting more evidence.",
+    )
+    investigation_target: Optional[InvestigationTargetEnum] = Field(
+        default=None,
+        description="Evidence bundle to reveal when action_type='investigate'.",
+    )
+    decision: Optional[DecisionEnum] = Field(default=None, description="Predicted fraud label.")
+    confidence: Optional[float] = Field(
+        default=None,
         ge=0.0,
         le=1.0,
         description="Confidence assigned to the prediction.",
     )
     reasoning: str = Field(
-        ...,
-        min_length=10,
+        default="",
         max_length=500,
-        description="Short explanation supporting the decision.",
+        description="Short explanation supporting the decision or the investigation choice.",
     )
+
+    @model_validator(mode="after")
+    def validate_action_payload(self) -> "FraudCheckAction":
+        reasoning = self.reasoning.strip()
+
+        if self.action_type == ActionTypeEnum.DECIDE:
+            if self.decision is None:
+                raise ValueError("decision is required when action_type='decide'")
+            if self.confidence is None:
+                raise ValueError("confidence is required when action_type='decide'")
+            if len(reasoning) < 10:
+                raise ValueError("reasoning must be at least 10 characters for decision actions")
+        else:
+            if self.investigation_target is None:
+                raise ValueError("investigation_target is required when action_type='investigate'")
+            if self.decision is not None or self.confidence is not None:
+                raise ValueError("investigation actions must not include decision or confidence")
+            if reasoning and len(reasoning) < 10:
+                raise ValueError("reasoning must be at least 10 characters when supplied")
+
+        self.reasoning = reasoning
+        return self
 
 
 class TransactionData(BaseModel):
@@ -293,6 +339,27 @@ class FraudCheckObservation(BaseModel):
         default=None,
         description="Rolling marketplace context relevant to this transaction.",
     )
+    visible_signal_summary: str = Field(
+        default="",
+        description="Natural-language summary of the currently visible fraud signals.",
+    )
+    available_investigations: List[InvestigationTargetEnum] = Field(
+        default_factory=list,
+        description="Evidence bundles that can still be requested for the active case.",
+    )
+    revealed_evidence: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Evidence bundles already unlocked for the current transaction.",
+    )
+    investigation_budget_remaining: int = Field(
+        default=0,
+        ge=0,
+        description="How many more investigation actions may be spent on the current case.",
+    )
+    case_stage: str = Field(
+        default="triage",
+        description="Current stage of review for the case, such as triage or awaiting_decision.",
+    )
 
 
 class Reward(BaseModel):
@@ -335,8 +402,14 @@ class Reward(BaseModel):
 
     value: float = Field(..., ge=-1.0, le=1.0, description="Dense reward for the action.")
     reason: str = Field(..., description="Human-readable summary of the reward calculation.")
-    is_correct: bool = Field(..., description="Whether the prediction matched the hidden label.")
-    ground_truth: DecisionEnum = Field(..., description="Hidden ground-truth label revealed after acting.")
+    is_correct: Optional[bool] = Field(
+        default=None,
+        description="Whether the prediction matched the hidden label. Null for investigation actions.",
+    )
+    ground_truth: Optional[DecisionEnum] = Field(
+        default=None,
+        description="Hidden ground-truth label revealed after a final decision. Null during investigation.",
+    )
     confidence_penalty: float = Field(
         ...,
         ge=-0.3,
@@ -348,6 +421,24 @@ class Reward(BaseModel):
         ge=0.5,
         le=2.0,
         description="Relative business cost multiplier for the current case.",
+    )
+    action_type: ActionTypeEnum = Field(
+        default=ActionTypeEnum.DECIDE,
+        description="Whether the reward came from a decision or an investigation action.",
+    )
+    investigation_target: Optional[InvestigationTargetEnum] = Field(
+        default=None,
+        description="Investigation bundle associated with the reward, if any.",
+    )
+    evidence_revealed: bool = Field(
+        default=False,
+        description="Whether this step unlocked a new evidence bundle.",
+    )
+    action_cost: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Explicit cost paid for the action, typically non-zero for investigation steps.",
     )
 
 
@@ -396,6 +487,17 @@ class EpisodeState(BaseModel):
     correct_predictions: int = Field(..., ge=0, description="Correct predictions made so far.")
     is_done: bool = Field(..., description="Whether the episode has reached a terminal state.")
     max_steps: int = Field(..., ge=1, description="Maximum number of allowed steps in the task.")
+    current_transaction_id: str = Field(..., description="Transaction currently under review.")
+    investigations_used: int = Field(..., ge=0, description="Investigation actions used so far in the episode.")
+    investigation_budget_remaining: int = Field(
+        default=0,
+        ge=0,
+        description="How many investigation actions remain for the active case.",
+    )
+    revealed_evidence_keys: List[str] = Field(
+        default_factory=list,
+        description="Evidence bundles already unlocked for the active case.",
+    )
 
 
 class StepResult(BaseModel):
