@@ -79,8 +79,10 @@ def get_env(*names: str, default: str = "") -> str:
 
     for name in names:
         value = os.getenv(name)
-        if value:
-            return value
+        if value is not None:
+            stripped_value = value.strip()
+            if stripped_value:
+                return stripped_value
     return default
 
 
@@ -258,8 +260,8 @@ def main() -> Dict[str, object]:
     logger.info(
         "Agent mode: %s | API_BASE_URL=%s | MODEL_NAME=%s",
         getattr(agent, "name", agent.__class__.__name__),
-        get_env("API_BASE_URL", "APIBASEURL", default="https://router.huggingface.co/v1"),
-        get_env("MODEL_NAME", "MODELNAME", default="<offline-heuristic>"),
+        getattr(agent, "api_base_url", get_env("API_BASE_URL", "APIBASEURL", default="https://router.huggingface.co/v1")),
+        getattr(agent, "model_name", get_env("MODEL_NAME", "MODELNAME", default="<offline-heuristic>")),
     )
 
     easy_predictions, easy_ground_truth, easy_confidences, agent = run_task(env, agent, "easy")
@@ -279,8 +281,8 @@ def main() -> Dict[str, object]:
     )
     grading_result["metadata"] = {
         "agent_name": getattr(agent, "name", agent.__class__.__name__),
-        "api_base_url": get_env("API_BASE_URL", "APIBASEURL", default="https://router.huggingface.co/v1"),
-        "model_name": get_env("MODEL_NAME", "MODELNAME"),
+        "api_base_url": getattr(agent, "api_base_url", get_env("API_BASE_URL", "APIBASEURL", default="https://router.huggingface.co/v1")),
+        "model_name": getattr(agent, "model_name", get_env("MODEL_NAME", "MODELNAME")),
         "seed": 42,
         "data_snapshot": env.data_loader.get_bundle_summary(),
         "tasks": {

@@ -15,6 +15,7 @@ except ImportError:  # pragma: no cover - dependency installed in submission ima
     OpenAI = None
 
 logger = logging.getLogger(__name__)
+DEFAULT_PROXY_MODEL = "gpt-4o-mini"
 
 
 def get_env(*names: str, default: Optional[str] = None) -> Optional[str]:
@@ -22,8 +23,10 @@ def get_env(*names: str, default: Optional[str] = None) -> Optional[str]:
 
     for name in names:
         value = os.getenv(name)
-        if value:
-            return value
+        if value is not None:
+            stripped_value = value.strip()
+            if stripped_value:
+                return stripped_value
     return default
 
 
@@ -132,7 +135,7 @@ class OpenAIFraudDetectionAgent:
             raise RuntimeError(
                 "OpenAI baseline request failed for "
                 f"{observation.transaction_id} using model '{self.model_name}' at '{self.api_base_url}'. "
-                "Check MODEL_NAME, HF_TOKEN, and API_BASE_URL."
+                "Check API_BASE_URL, API_KEY, and MODEL_NAME."
             ) from exc
 
     def _build_messages(self, observation) -> list[Dict[str, str]]:
@@ -192,20 +195,68 @@ class OpenAIFraudDetectionAgent:
         return payload
 
 
+def discover_model_name(api_key: str, api_base_url: str) -> Optional[str]:
+    """Query the configured proxy for available models and pick a sensible default."""
+
+    if OpenAI is None:
+        raise ImportError("openai package is not installed. Install project dependencies first.")
+
+    client = OpenAI(base_url=api_base_url, api_key=api_key, timeout=15.0)
+
+    try:
+        response = client.models.list()
+        model_ids = sorted(
+            {
+                getattr(model, "id", "").strip()
+                for model in response
+                if getattr(model, "id", "").strip()
+            }
+        )
+    except Exception as exc:
+        logger.warning(
+            "Could not list models from API_BASE_URL=%s: %s. Falling back to default proxy model %s.",
+            api_base_url,
+            exc,
+            DEFAULT_PROXY_MODEL,
+        )
+        return DEFAULT_PROXY_MODEL
+
+    if not model_ids:
+        logger.warning(
+            "The proxy at API_BASE_URL=%s returned no models. Falling back to default proxy model %s.",
+            api_base_url,
+            DEFAULT_PROXY_MODEL,
+        )
+        return DEFAULT_PROXY_MODEL
+
+    preferred_models = [
+        DEFAULT_PROXY_MODEL,
+        "gpt-4.1-mini",
+        "gpt-4o",
+        "gpt-4.1",
+    ]
+    for preferred_model in preferred_models:
+        if preferred_model in model_ids:
+            return preferred_model
+
+    return model_ids[0]
+
+
 def build_default_agent() -> object:
     """Create the required OpenAI client agent when configured, else use the offline fallback."""
 
     model_name = get_env("MODEL_NAME", "MODELNAME")
-    api_key = get_env("HF_TOKEN", "HFTOKEN", "OPENAI_API_KEY", "OPENAIAPIKEY", "API_KEY", "APIKEY")
-    api_base_url = get_env("API_BASE_URL", "APIBASEURL", default="https://router.huggingface.co/v1")
+    api_key = get_env("API_KEY", "APIKEY", "OPENAI_API_KEY", "OPENAIAPIKEY", "HF_TOKEN", "HFTOKEN")
+    api_base_url = get_env("API_BASE_URL", "APIBASEURL")
 
-    # Only use OpenAI if BOTH model_name and api_key are set
-    if model_name and api_key:
+    if api_key:
+        resolved_api_base_url = api_base_url or "https://router.huggingface.co/v1"
+        resolved_model_name = model_name or discover_model_name(api_key, resolved_api_base_url)
         try:
             return OpenAIFraudDetectionAgent(
-                model_name=model_name,
+                model_name=resolved_model_name,
                 api_key=api_key,
-                api_base_url=api_base_url,
+                api_base_url=resolved_api_base_url,
             )
         except Exception as exc:
             logger.warning(
@@ -213,15 +264,14 @@ def build_default_agent() -> object:
             )
             return HeuristicFraudDetectionAgent()
 
-    # If only one is set or neither is set, fall back to heuristic
-    if model_name or api_key:
+    if model_name and not api_key:
         logger.warning(
-            "Only one of MODEL_NAME and HF_TOKEN/API_KEY was set (both required for OpenAI mode). "
+            "MODEL_NAME was set but no API_KEY-compatible credential was available. "
             "Falling back to the deterministic heuristic agent."
         )
     else:
         logger.warning(
-            "MODEL_NAME and HF_TOKEN/API_KEY were not set. "
+            "API_KEY-compatible credentials were not set. "
             "Falling back to the deterministic heuristic agent."
         )
     return HeuristicFraudDetectionAgent()
