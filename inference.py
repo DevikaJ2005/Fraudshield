@@ -118,12 +118,10 @@ def run_task(env: FraudShieldEnvironment, agent: object, task_name: str) -> Tupl
         print(f"Accuracy: {sum(p == l for p, l in zip(preds, labels)) / len(preds)}")
     """
 
-    logger.info("%s", "=" * 72)
-    logger.info("Running %s task with %s", task_name.upper(), getattr(agent, "name", agent.__class__.__name__))
-    logger.info("%s", "=" * 72)
+    agent_name = getattr(agent, "name", agent.__class__.__name__)
+    logger.info("START %s %s", task_name, agent_name)
 
     reset_result = env.reset(task_name)
-    logger.info("Episode %s contains %s transactions", env.episode_id, reset_result.info["num_transactions"])
 
     observation = reset_result.observation
     predictions: List[str] = []
@@ -135,21 +133,21 @@ def run_task(env: FraudShieldEnvironment, agent: object, task_name: str) -> Tupl
         confidences.append(action.confidence)
         step_result = env.step(action)
 
-        if env.step_count in {1, len(env.current_cases)} or env.step_count % 10 == 0:
-            logger.info(
-                "Step %02d | decision=%s | confidence=%.2f | reward=%+.2f",
-                env.step_count,
-                action.decision.value,
-                action.confidence,
-                step_result.reward.value,
-            )
+        logger.info(
+            "STEP %02d %s %.2f %+.2f",
+            env.step_count,
+            action.decision.value,
+            action.confidence,
+            step_result.reward.value,
+        )
 
         observation = step_result.observation
 
+    accuracy = env.correct_predictions / max(1, env.step_count)
     logger.info(
-        "Finished %s: accuracy_so_far=%.3f cumulative_reward=%.3f",
+        "END %s %.3f %.3f",
         task_name.upper(),
-        env.correct_predictions / max(1, env.step_count),
+        accuracy,
         env.cumulative_reward,
     )
     return predictions, list(env.ground_truth_labels), confidences
@@ -193,9 +191,7 @@ def main() -> Dict[str, object]:
         print(f"Easy: {result['easy']['score']:.4f}")
     """
 
-    logger.info("%s", "=" * 72)
-    logger.info("FraudShield baseline inference")
-    logger.info("%s", "=" * 72)
+    logger.info("START FraudShield baseline inference")
 
     env = FraudShieldEnvironment(data_path="data", seed=42)
     if not env.load_data():
@@ -241,7 +237,7 @@ def main() -> Dict[str, object]:
     logger.info("Easy score:   %.4f", grading_result["easy"]["score"])
     logger.info("Medium score: %.4f", grading_result["medium"]["score"])
     logger.info("Hard score:   %.4f", grading_result["hard"]["score"])
-    logger.info("Final score:  %.4f", grading_result["final_score"])
+    logger.info("END FraudShield %.4f", grading_result["final_score"])
 
     with open(RESULTS_FILE, "w", encoding="utf-8") as handle:
         json.dump(grading_result, handle, indent=2)
