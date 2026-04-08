@@ -1,3 +1,13 @@
+---
+title: FraudShield
+emoji: 🛡️
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_file: server/app.py
+pinned: false
+---
+
 # FraudShield 🛡️
 
 **Production-grade OpenEnv environment for e-commerce fraud detection**
