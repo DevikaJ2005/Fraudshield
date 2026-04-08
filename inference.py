@@ -52,7 +52,7 @@ from typing import Dict, List, Tuple
 
 from fraudshield_env import FraudShieldEnvironment
 from graders import FraudShieldGrader
-from llm_agent import build_default_agent
+from llm_agent import HeuristicFraudDetectionAgent, build_default_agent
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -84,7 +84,32 @@ def get_env(*names: str, default: str = "") -> str:
     return default
 
 
-def run_task(env: FraudShieldEnvironment, agent: object, task_name: str) -> Tuple[List[str], List[str], List[float]]:
+def emit_event(event_name: str, **fields: object) -> None:
+    """Print validator-friendly structured progress blocks to stdout."""
+
+    parts = [f"[{event_name}]"]
+    parts.extend(f"{key}={value}" for key, value in fields.items())
+    print(" ".join(parts), flush=True)
+
+
+def build_resilient_agent() -> object:
+    """Prefer the configured agent but never fail the baseline on init issues."""
+
+    try:
+        return build_default_agent()
+    except Exception as exc:
+        logger.warning(
+            "Agent initialization failed: %s. Falling back to the deterministic heuristic agent.",
+            exc,
+        )
+        return HeuristicFraudDetectionAgent()
+
+
+def run_task(
+    env: FraudShieldEnvironment,
+    agent: object,
+    task_name: str,
+) -> Tuple[List[str], List[str], List[float], object]:
     """Run one task episode and capture the full prediction trace.
     
     This function executes a complete episode for a single task difficulty,
@@ -96,10 +121,11 @@ def run_task(env: FraudShieldEnvironment, agent: object, task_name: str) -> Tupl
         task_name: Task difficulty ("easy", "medium", or "hard").
     
     Returns:
-        Tuple of 3 lists:
+        Tuple containing:
         - predictions: List[str] of decisions ("fraud" or "legitimate")
         - ground_truth: List[str] of true labels
         - confidences: List[float] of confidence values [0.0, 1.0]
+        - agent: Possibly updated agent if a fallback was needed
     
     Workflow:
         1. Call env.reset(task_name) to initialize episode
@@ -120,15 +146,30 @@ def run_task(env: FraudShieldEnvironment, agent: object, task_name: str) -> Tupl
 
     agent_name = getattr(agent, "name", agent.__class__.__name__)
     logger.info("START %s %s", task_name, agent_name)
+    emit_event("START", task=task_name, agent=agent_name)
 
     reset_result = env.reset(task_name)
 
     observation = reset_result.observation
     predictions: List[str] = []
     confidences: List[float] = []
+    fallback_agent: object | None = None
 
     while not env.is_done:
-        action = agent.decide(observation)
+        try:
+            action = agent.decide(observation)
+        except Exception as exc:
+            if fallback_agent is None:
+                fallback_agent = HeuristicFraudDetectionAgent()
+                logger.warning(
+                    "Agent decision failed on task %s at step %s: %s. Switching to heuristic fallback.",
+                    task_name,
+                    env.step_count + 1,
+                    exc,
+                )
+            agent = fallback_agent
+            action = agent.decide(observation)
+
         predictions.append(action.decision.value)
         confidences.append(action.confidence)
         step_result = env.step(action)
@@ -140,6 +181,14 @@ def run_task(env: FraudShieldEnvironment, agent: object, task_name: str) -> Tupl
             action.confidence,
             step_result.reward.value,
         )
+        emit_event(
+            "STEP",
+            task=task_name,
+            step=env.step_count,
+            decision=action.decision.value,
+            confidence=f"{action.confidence:.2f}",
+            reward=f"{step_result.reward.value:+.2f}",
+        )
 
         observation = step_result.observation
 
@@ -150,7 +199,14 @@ def run_task(env: FraudShieldEnvironment, agent: object, task_name: str) -> Tupl
         accuracy,
         env.cumulative_reward,
     )
-    return predictions, list(env.ground_truth_labels), confidences
+    emit_event(
+        "END",
+        task=task_name,
+        score=f"{accuracy:.4f}",
+        reward=f"{env.cumulative_reward:.4f}",
+        steps=env.step_count,
+    )
+    return predictions, list(env.ground_truth_labels), confidences, agent
 
 
 def main() -> Dict[str, object]:
@@ -198,7 +254,7 @@ def main() -> Dict[str, object]:
         logger.error("FraudShield data could not be loaded from ./data")
         sys.exit(1)
 
-    agent = build_default_agent()
+    agent = build_resilient_agent()
     logger.info(
         "Agent mode: %s | API_BASE_URL=%s | MODEL_NAME=%s",
         getattr(agent, "name", agent.__class__.__name__),
@@ -206,9 +262,9 @@ def main() -> Dict[str, object]:
         get_env("MODEL_NAME", "MODELNAME", default="<offline-heuristic>"),
     )
 
-    easy_predictions, easy_ground_truth, easy_confidences = run_task(env, agent, "easy")
-    medium_predictions, medium_ground_truth, medium_confidences = run_task(env, agent, "medium")
-    hard_predictions, hard_ground_truth, hard_confidences = run_task(env, agent, "hard")
+    easy_predictions, easy_ground_truth, easy_confidences, agent = run_task(env, agent, "easy")
+    medium_predictions, medium_ground_truth, medium_confidences, agent = run_task(env, agent, "medium")
+    hard_predictions, hard_ground_truth, hard_confidences, agent = run_task(env, agent, "hard")
 
     grading_result = FraudShieldGrader.grade_all_tasks(
         easy_predictions,
@@ -238,6 +294,12 @@ def main() -> Dict[str, object]:
     logger.info("Medium score: %.4f", grading_result["medium"]["score"])
     logger.info("Hard score:   %.4f", grading_result["hard"]["score"])
     logger.info("END FraudShield %.4f", grading_result["final_score"])
+    emit_event(
+        "END",
+        task="overall",
+        score=f"{grading_result['final_score']:.4f}",
+        steps=len(easy_ground_truth) + len(medium_ground_truth) + len(hard_ground_truth),
+    )
 
     with open(RESULTS_FILE, "w", encoding="utf-8") as handle:
         json.dump(grading_result, handle, indent=2)
