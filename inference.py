@@ -111,7 +111,7 @@ def run_task(
     env: FraudShieldEnvironment,
     agent: object,
     task_name: str,
-) -> Tuple[List[str], List[str], List[float], object]:
+) -> Tuple[List[str], List[str], List[float], object, float]:
     """Run one task episode and capture the full prediction trace.
     
     This function executes a complete episode for a single task difficulty,
@@ -128,6 +128,7 @@ def run_task(
         - ground_truth: List[str] of true labels
         - confidences: List[float] of confidence values [0.0, 1.0]
         - agent: Possibly updated agent if a fallback was needed
+        - cumulative_reward: Total episode reward for the task
     
     Workflow:
         1. Call env.reset(task_name) to initialize episode
@@ -201,14 +202,7 @@ def run_task(
         accuracy,
         env.cumulative_reward,
     )
-    emit_event(
-        "END",
-        task=task_name,
-        score=f"{accuracy:.4f}",
-        reward=f"{env.cumulative_reward:.4f}",
-        steps=env.step_count,
-    )
-    return predictions, list(env.ground_truth_labels), confidences, agent
+    return predictions, list(env.ground_truth_labels), confidences, agent, env.cumulative_reward
 
 
 def main() -> Dict[str, object]:
@@ -264,21 +258,56 @@ def main() -> Dict[str, object]:
         getattr(agent, "model_name", get_env("MODEL_NAME", "MODELNAME", default="<offline-heuristic>")),
     )
 
-    easy_predictions, easy_ground_truth, easy_confidences, agent = run_task(env, agent, "easy")
-    medium_predictions, medium_ground_truth, medium_confidences, agent = run_task(env, agent, "medium")
-    hard_predictions, hard_ground_truth, hard_confidences, agent = run_task(env, agent, "hard")
+    easy_predictions, easy_ground_truth, easy_confidences, agent, easy_reward = run_task(env, agent, "easy")
+    easy_result = FraudShieldGrader.grade_easy_task(easy_predictions, easy_ground_truth, easy_confidences)
+    emit_event(
+        "END",
+        task="easy",
+        score=f"{easy_result['score']:.4f}",
+        reward=f"{easy_reward:.4f}",
+        steps=len(easy_ground_truth),
+    )
 
-    grading_result = FraudShieldGrader.grade_all_tasks(
-        easy_predictions,
-        easy_ground_truth,
-        easy_confidences,
+    medium_predictions, medium_ground_truth, medium_confidences, agent, medium_reward = run_task(env, agent, "medium")
+    medium_result = FraudShieldGrader.grade_medium_task(
         medium_predictions,
         medium_ground_truth,
         medium_confidences,
+    )
+    emit_event(
+        "END",
+        task="medium",
+        score=f"{medium_result['score']:.4f}",
+        reward=f"{medium_reward:.4f}",
+        steps=len(medium_ground_truth),
+    )
+
+    hard_predictions, hard_ground_truth, hard_confidences, agent, hard_reward = run_task(env, agent, "hard")
+    hard_result = FraudShieldGrader.grade_hard_task(
         hard_predictions,
         hard_ground_truth,
         hard_confidences,
     )
+    emit_event(
+        "END",
+        task="hard",
+        score=f"{hard_result['score']:.4f}",
+        reward=f"{hard_reward:.4f}",
+        steps=len(hard_ground_truth),
+    )
+
+    final_score = (easy_result["score"] + medium_result["score"] + hard_result["score"]) / 3.0
+    grading_result = {
+        "final_score": float(final_score),
+        "easy": easy_result,
+        "medium": medium_result,
+        "hard": hard_result,
+        "breakdown": {
+            "easy_weight": 1 / 3,
+            "medium_weight": 1 / 3,
+            "hard_weight": 1 / 3,
+        },
+    }
     grading_result["metadata"] = {
         "agent_name": getattr(agent, "name", agent.__class__.__name__),
         "api_base_url": getattr(agent, "api_base_url", get_env("API_BASE_URL", "APIBASEURL", default="https://router.huggingface.co/v1")),

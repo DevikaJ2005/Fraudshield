@@ -9,7 +9,9 @@ from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_
 
 
 class FraudShieldGrader:
-    """Task graders returning scores in the inclusive range [0.0, 1.0]."""
+    """Task graders returning scores in the strict range (0.0, 1.0)."""
+
+    STRICT_SCORE_EPSILON = 1e-4
 
     @staticmethod
     def _validate(predictions: List[str], ground_truth: List[str], confidences: List[float]) -> bool:
@@ -24,6 +26,17 @@ class FraudShieldGrader:
     @staticmethod
     def _score_confidence(predictions: List[str], confidences: List[float]) -> List[float]:
         return [confidence if pred == "fraud" else 1.0 - confidence for pred, confidence in zip(predictions, confidences)]
+
+    @staticmethod
+    def _strict_score(score: float) -> float:
+        """Clamp task scores to the open interval required by the submission validator."""
+
+        return float(
+            max(
+                FraudShieldGrader.STRICT_SCORE_EPSILON,
+                min(1.0 - FraudShieldGrader.STRICT_SCORE_EPSILON, score),
+            )
+        )
 
     @staticmethod
     def _classification_metrics(
@@ -69,7 +82,7 @@ class FraudShieldGrader:
         """Easy task emphasizes obvious-case accuracy and false-positive control."""
 
         if not FraudShieldGrader._validate(predictions, ground_truth, confidences):
-            return {"score": 0.0, "reason": "Invalid predictions"}
+            return {"score": FraudShieldGrader._strict_score(0.0), "reason": "Invalid predictions"}
 
         metrics = FraudShieldGrader._classification_metrics(predictions, ground_truth, confidences)
         score = (
@@ -89,7 +102,7 @@ class FraudShieldGrader:
         """Medium task rewards balanced classification and calibrated confidence."""
 
         if not FraudShieldGrader._validate(predictions, ground_truth, confidences):
-            return {"score": 0.0, "reason": "Invalid predictions"}
+            return {"score": FraudShieldGrader._strict_score(0.0), "reason": "Invalid predictions"}
 
         metrics = FraudShieldGrader._classification_metrics(predictions, ground_truth, confidences)
         score = (
@@ -109,7 +122,7 @@ class FraudShieldGrader:
         """Hard task weights fraud capture, precision, and ranking quality."""
 
         if not FraudShieldGrader._validate(predictions, ground_truth, confidences):
-            return {"score": 0.0, "reason": "Invalid predictions"}
+            return {"score": FraudShieldGrader._strict_score(0.0), "reason": "Invalid predictions"}
 
         metrics = FraudShieldGrader._classification_metrics(predictions, ground_truth, confidences)
         score = (
@@ -182,7 +195,7 @@ class FraudShieldGrader:
         ground_truth: List[str],
     ) -> Dict[str, Any]:
         return {
-            "score": float(max(0.0, min(1.0, score))),
+            "score": FraudShieldGrader._strict_score(score),
             "task": task_name,
             "metrics": metrics,
             "num_transactions": len(ground_truth),
