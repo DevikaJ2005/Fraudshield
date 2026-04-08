@@ -4,7 +4,9 @@ emoji: 🛡️
 colorFrom: blue
 colorTo: indigo
 sdk: docker
+python_version: "3.11"
 pinned: false
+license: mit
 ---
 
 # FraudShield 🛡️
