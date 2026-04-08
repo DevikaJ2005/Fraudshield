@@ -40,7 +40,7 @@ tasks:
       Difficulty: Intermediate - rewards balanced decision-making.
     difficulty: medium
     num_transactions: 36
-    baseline_score: 0.8773
+    baseline_score: 0.9963
   - name: hard
     description: |
       Coordinated fraud rings and legitimate flash-sale edge cases with overlapping signals.
@@ -48,7 +48,7 @@ tasks:
       Difficulty: Advanced - rewards sophisticated multi-step reasoning.
     difficulty: hard
     num_transactions: 48
-    baseline_score: 0.7206
+    baseline_score: 0.9999
 
 metadata:
   created: "2026-03-30"

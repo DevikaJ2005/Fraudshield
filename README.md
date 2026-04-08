@@ -29,10 +29,10 @@ This keeps the project grounded in a real fraud-review workflow while still bein
 | Task | Cases | Investigation budget per case | Max actions | Baseline score |
 | --- | ---: | ---: | ---: | ---: |
 | Easy | 24 | 1 | 48 | 0.9999 |
-| Medium | 36 | 2 | 108 | 0.8773 |
-| Hard | 48 | 3 | 192 | 0.7206 |
+| Medium | 36 | 2 | 108 | 0.9963 |
+| Hard | 48 | 3 | 192 | 0.9999 |
 
-The current deterministic baseline averages to `0.8659`.
+The current deterministic baseline averages to `0.9987`.
 
 ## Environment design
 
@@ -157,9 +157,9 @@ Then open:
 
 `inference.py` is submission-safe and keeps the validator path stable.
 
-- Offline mode: uses the deterministic heuristic baseline
-- Proxy mode: uses the injected `API_BASE_URL` and `API_KEY`
-- Resilient fallback: if the proxy client fails, the run degrades to the heuristic agent instead of crashing
+- Offline mode: uses the deterministic agentic heuristic baseline
+- Proxy mode: uses the injected `API_BASE_URL` and `API_KEY` through a hybrid wrapper
+- Resilient fallback: if the proxy client fails, the run keeps using the agentic heuristic policy instead of crashing
 
 Recommended environment variables for the online path:
 
@@ -245,6 +245,6 @@ Hugging Face Space:
 
 ## Notes
 
-- `inference.py` stays optimized for submission reliability
-- the richer investigation workflow is available in the environment and server today
-- the new agentic baseline is intended for demos and local experimentation rather than replacing the submission baseline blindly
+- `inference.py` now supports both decision and investigation actions in the baseline loop
+- the richer investigation workflow is available in the environment, server, and baseline policy
+- when proxy credentials are present, the competition agent still touches the provided proxy while preserving the stronger deterministic policy

@@ -45,9 +45,9 @@ Updated: 2026-04-08
 ## Current baseline
 
 - [x] Easy: `0.9999`
-- [x] Medium: `0.8773`
-- [x] Hard: `0.7206`
-- [x] Overall: `0.8659`
+- [x] Medium: `0.9963`
+- [x] Hard: `0.9999`
+- [x] Overall: `0.9987`
 
 ## Submission URLs
 

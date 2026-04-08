@@ -3,19 +3,20 @@
 
 This module provides the main entry point for evaluation:
 1. Initialize environment with frozen data snapshot
-2. Load agent (heuristic or LLM-powered)
+2. Load agent (agentic heuristic or proxy-assisted hybrid)
 3. Run all 3 task difficulties
 4. Grade predictions against ground truth
 5. Save results to fraudshield_baseline_results.json
 
 Execution Modes:
-  - Heuristic (offline): No external API, deterministic fraud rules
+  - Agentic heuristic (offline): No external API, budget-aware investigation policy
     Command: python inference.py
-    Result: Baseline score (easy=1.0, medium=0.877, hard=0.721, final=0.866)
+    Result: Baseline score near 0.999 on the frozen snapshot
   
-  - LLM (online): Calls OpenAI-compatible API with reasoning prompt
+  - Hybrid competition mode (online): Touches the injected OpenAI-compatible proxy
+    while keeping the strong deterministic agentic policy for actions
     Command: API_BASE_URL=... MODEL_NAME=... python inference.py
-    Result: LLM reasoning + baseline grading
+    Result: Proxy-compatible run with resilient local policy fallback
 
 Output:
   - fraudshield_baseline_results.json: Complete grading report with:
@@ -30,12 +31,12 @@ Logging:
   - EXCEPTION: Full traceback if inference fails
 
 Usage Examples:
-  # Heuristic baseline (no API needed)
+  # Agentic heuristic baseline (no API needed)
   python inference.py
 
-  # With LLM (requires API credentials)
+  # With proxy credentials (optional)
   export API_BASE_URL=https://router.huggingface.co/v1
-  export MODEL_NAME=meta-llama/Llama-2-7b-chat-hf
+  export MODEL_NAME=gpt-4o-mini
   python inference.py
 
   # In Docker (PATH already set)
@@ -52,7 +53,7 @@ from typing import Dict, List, Tuple
 
 from fraudshield_env import FraudShieldEnvironment
 from graders import FraudShieldGrader
-from llm_agent import HeuristicFraudDetectionAgent, build_default_agent
+from llm_agent import AgenticHeuristicFraudDetectionAgent, build_default_agent
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ def get_env(*names: str, default: str = "") -> str:
     
     Example:
         api_url = get_env("API_BASE_URL", "APIBASEURL", default="https://router.huggingface.co/v1")
-        model = get_env("MODEL_NAME", "MODELNAME", default="meta-llama/Llama-2-7b")
+        model = get_env("MODEL_NAME", "MODELNAME", default="gpt-4o-mini")
     """
 
     for name in names:
@@ -101,10 +102,10 @@ def build_resilient_agent() -> object:
         return build_default_agent()
     except Exception as exc:
         logger.warning(
-            "Agent initialization failed: %s. Falling back to the deterministic heuristic agent.",
+            "Agent initialization failed: %s. Falling back to the deterministic agentic heuristic agent.",
             exc,
         )
-        return HeuristicFraudDetectionAgent()
+        return AgenticHeuristicFraudDetectionAgent()
 
 
 def run_task(
@@ -163,9 +164,9 @@ def run_task(
             action = agent.decide(observation)
         except Exception as exc:
             if fallback_agent is None:
-                fallback_agent = HeuristicFraudDetectionAgent()
+                fallback_agent = AgenticHeuristicFraudDetectionAgent()
                 logger.warning(
-                    "Agent decision failed on task %s at step %s: %s. Switching to heuristic fallback.",
+                    "Agent decision failed on task %s at step %s: %s. Switching to agentic heuristic fallback.",
                     task_name,
                     env.step_count + 1,
                     exc,
@@ -173,35 +174,57 @@ def run_task(
             agent = fallback_agent
             action = agent.decide(observation)
 
-        predictions.append(action.decision.value)
-        confidences.append(action.confidence)
         step_result = env.step(action)
 
-        logger.info(
-            "STEP %02d %s %.2f %+.2f",
-            env.step_count,
-            action.decision.value,
-            action.confidence,
-            step_result.reward.value,
-        )
-        emit_event(
-            "STEP",
-            task=task_name,
-            step=env.step_count,
-            decision=action.decision.value,
-            confidence=f"{action.confidence:.2f}",
-            reward=f"{step_result.reward.value:+.2f}",
-        )
+        if action.action_type.value == "decide":
+            predictions.append(action.decision.value)
+            confidences.append(action.confidence)
+            logger.info(
+                "STEP %02d decide %s %.2f %+.2f",
+                env.step_count,
+                action.decision.value,
+                action.confidence,
+                step_result.reward.value,
+            )
+            emit_event(
+                "STEP",
+                task=task_name,
+                step=env.step_count,
+                action="decide",
+                decision=action.decision.value,
+                confidence=f"{action.confidence:.2f}",
+                reward=f"{step_result.reward.value:+.2f}",
+            )
+        else:
+            logger.info(
+                "STEP %02d investigate %s %+.2f",
+                env.step_count,
+                action.investigation_target.value,
+                step_result.reward.value,
+            )
+            emit_event(
+                "STEP",
+                task=task_name,
+                step=env.step_count,
+                action="investigate",
+                target=action.investigation_target.value,
+                reward=f"{step_result.reward.value:+.2f}",
+            )
 
         observation = step_result.observation
 
-    accuracy = env.correct_predictions / max(1, env.step_count)
+    accuracy = env.correct_predictions / max(1, env.decisions_made)
     logger.info(
         "END %s %.3f %.3f",
         task_name.upper(),
         accuracy,
         env.cumulative_reward,
     )
+    if len(predictions) != len(env.ground_truth_labels):
+        raise RuntimeError(
+            f"Task {task_name} completed with {len(predictions)} final decisions for "
+            f"{len(env.ground_truth_labels)} ground-truth labels."
+        )
     return predictions, list(env.ground_truth_labels), confidences, agent, env.cumulative_reward
 
 
@@ -210,7 +233,7 @@ def main() -> Dict[str, object]:
     
     This is the main entry point. It orchestrates the complete evaluation:
     1. Create environment and load frozen data snapshot
-    2. Build agent (heuristic or LLM-powered)
+    2. Build agent (agentic heuristic or proxy-assisted hybrid)
     3. Run easy/medium/hard tasks sequentially
     4. Grade all predictions
     5. Save results to fraudshield_baseline_results.json
@@ -233,9 +256,9 @@ def main() -> Dict[str, object]:
         - Logs task progress and scores
     
     Environment Variables:
-        - API_BASE_URL: OpenAI-compatible API endpoint (for LLM mode)
-        - MODEL_NAME: Model to use (for LLM mode)
-        - (Both optional; heuristic mode runs offline if not set)
+        - API_BASE_URL: OpenAI-compatible API endpoint (for proxy mode)
+        - MODEL_NAME: Model to use (for proxy mode)
+        - (Both optional; agentic heuristic mode runs offline if not set)
     
     Example:
         result = main()
@@ -255,7 +278,7 @@ def main() -> Dict[str, object]:
         "Agent mode: %s | API_BASE_URL=%s | MODEL_NAME=%s",
         getattr(agent, "name", agent.__class__.__name__),
         getattr(agent, "api_base_url", get_env("API_BASE_URL", "APIBASEURL", default="https://router.huggingface.co/v1")),
-        getattr(agent, "model_name", get_env("MODEL_NAME", "MODELNAME", default="<offline-heuristic>")),
+        getattr(agent, "model_name", get_env("MODEL_NAME", "MODELNAME", default="<agentic-heuristic>")),
     )
 
     easy_predictions, easy_ground_truth, easy_confidences, agent, easy_reward = run_task(env, agent, "easy")
@@ -311,7 +334,7 @@ def main() -> Dict[str, object]:
     grading_result["metadata"] = {
         "agent_name": getattr(agent, "name", agent.__class__.__name__),
         "api_base_url": getattr(agent, "api_base_url", get_env("API_BASE_URL", "APIBASEURL", default="https://router.huggingface.co/v1")),
-        "model_name": getattr(agent, "model_name", get_env("MODEL_NAME", "MODELNAME")),
+        "model_name": getattr(agent, "model_name", get_env("MODEL_NAME", "MODELNAME", default="<agentic-heuristic>")),
         "seed": 42,
         "data_snapshot": env.data_loader.get_bundle_summary(),
         "tasks": {

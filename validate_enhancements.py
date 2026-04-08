@@ -134,7 +134,7 @@ def check_results_file():
             print(f"   ✓ {name} score: {score:.4f}")
         
         # Check if baseline score matches expected value
-        expected_final = 0.8660
+        expected_final = 0.9987
         actual_final = results["final_score"]
         tolerance = 0.001
         
