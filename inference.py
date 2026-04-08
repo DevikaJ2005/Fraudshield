@@ -248,6 +248,11 @@ def main() -> Dict[str, object]:
 if __name__ == "__main__":  # pragma: no cover
     try:
         main()
+        logger.info("Baseline inference completed successfully")
+        sys.exit(0)
+    except KeyboardInterrupt:
+        logger.warning("Baseline inference interrupted by user")
+        sys.exit(0)
     except Exception as exc:
-        logger.exception("Baseline inference failed: %s", exc)
+        logger.exception("Baseline inference failed with exception: %s", exc)
         sys.exit(1)

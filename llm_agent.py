@@ -199,20 +199,29 @@ def build_default_agent() -> object:
     api_key = get_env("HF_TOKEN", "HFTOKEN", "OPENAI_API_KEY", "OPENAIAPIKEY", "API_KEY", "APIKEY")
     api_base_url = get_env("API_BASE_URL", "APIBASEURL", default="https://router.huggingface.co/v1")
 
-    if model_name or api_key:
-        if not model_name or not api_key:
-            raise RuntimeError(
-                "Both MODEL_NAME/MODELNAME and HF_TOKEN/HFTOKEN "
-                "(or OPENAI_API_KEY/API_KEY) must be set for OpenAI baseline mode."
+    # Only use OpenAI if BOTH model_name and api_key are set
+    if model_name and api_key:
+        try:
+            return OpenAIFraudDetectionAgent(
+                model_name=model_name,
+                api_key=api_key,
+                api_base_url=api_base_url,
             )
-        return OpenAIFraudDetectionAgent(
-            model_name=model_name,
-            api_key=api_key,
-            api_base_url=api_base_url,
-        )
+        except Exception as exc:
+            logger.warning(
+                "Failed to initialize OpenAI agent: %s. Falling back to heuristic.", exc
+            )
+            return HeuristicFraudDetectionAgent()
 
-    logger.warning(
-        "MODEL_NAME/MODELNAME and HF_TOKEN/HFTOKEN were not set. "
-        "Falling back to the deterministic heuristic agent."
-    )
+    # If only one is set or neither is set, fall back to heuristic
+    if model_name or api_key:
+        logger.warning(
+            "Only one of MODEL_NAME and HF_TOKEN/API_KEY was set (both required for OpenAI mode). "
+            "Falling back to the deterministic heuristic agent."
+        )
+    else:
+        logger.warning(
+            "MODEL_NAME and HF_TOKEN/API_KEY were not set. "
+            "Falling back to the deterministic heuristic agent."
+        )
     return HeuristicFraudDetectionAgent()
