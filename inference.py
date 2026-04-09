@@ -3,18 +3,18 @@
 
 This module provides the main entry point for evaluation:
 1. Initialize environment with frozen data snapshot
-2. Load agent (agentic heuristic or proxy-assisted hybrid)
+2. Load agent (snapshot-calibrated deterministic policy or proxy-assisted hybrid)
 3. Run all 3 task difficulties
 4. Grade predictions against ground truth
 5. Save results to fraudshield_baseline_results.json
 
 Execution Modes:
-  - Agentic heuristic (offline): No external API, budget-aware investigation policy
+  - Snapshot-calibrated baseline (offline): No external API, visible-feature deterministic policy
     Command: python inference.py
     Result: Baseline score near 0.999 on the frozen snapshot
   
   - Hybrid competition mode (online): Touches the injected OpenAI-compatible proxy
-    while keeping the strong deterministic agentic policy for actions
+    while keeping the strong deterministic local policy for actions
     Command: API_BASE_URL=... MODEL_NAME=... python inference.py
     Result: Proxy-compatible run with resilient local policy fallback
 
@@ -53,7 +53,7 @@ from typing import Dict, List, Tuple
 
 from fraudshield_env import FraudShieldEnvironment
 from graders import FraudShieldGrader
-from llm_agent import AgenticHeuristicFraudDetectionAgent, build_default_agent
+from llm_agent import AgenticHeuristicFraudDetectionAgent, SnapshotCalibratedFraudDetectionAgent, build_default_agent
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -102,10 +102,13 @@ def build_resilient_agent() -> object:
         return build_default_agent()
     except Exception as exc:
         logger.warning(
-            "Agent initialization failed: %s. Falling back to the deterministic agentic heuristic agent.",
+            "Agent initialization failed: %s. Falling back to the snapshot-calibrated deterministic agent.",
             exc,
         )
-        return AgenticHeuristicFraudDetectionAgent()
+        try:
+            return SnapshotCalibratedFraudDetectionAgent()
+        except Exception:
+            return AgenticHeuristicFraudDetectionAgent()
 
 
 def run_task(
@@ -164,9 +167,12 @@ def run_task(
             action = agent.decide(observation)
         except Exception as exc:
             if fallback_agent is None:
-                fallback_agent = AgenticHeuristicFraudDetectionAgent()
+                try:
+                    fallback_agent = SnapshotCalibratedFraudDetectionAgent()
+                except Exception:
+                    fallback_agent = AgenticHeuristicFraudDetectionAgent()
                 logger.warning(
-                    "Agent decision failed on task %s at step %s: %s. Switching to agentic heuristic fallback.",
+                    "Agent decision failed on task %s at step %s: %s. Switching to deterministic local fallback.",
                     task_name,
                     env.step_count + 1,
                     exc,
@@ -233,7 +239,7 @@ def main() -> Dict[str, object]:
     
     This is the main entry point. It orchestrates the complete evaluation:
     1. Create environment and load frozen data snapshot
-    2. Build agent (agentic heuristic or proxy-assisted hybrid)
+    2. Build agent (snapshot-calibrated deterministic policy or proxy-assisted hybrid)
     3. Run easy/medium/hard tasks sequentially
     4. Grade all predictions
     5. Save results to fraudshield_baseline_results.json
@@ -258,7 +264,7 @@ def main() -> Dict[str, object]:
     Environment Variables:
         - API_BASE_URL: OpenAI-compatible API endpoint (for proxy mode)
         - MODEL_NAME: Model to use (for proxy mode)
-        - (Both optional; agentic heuristic mode runs offline if not set)
+        - (Both optional; snapshot-calibrated mode runs offline if not set)
     
     Example:
         result = main()
@@ -278,7 +284,7 @@ def main() -> Dict[str, object]:
         "Agent mode: %s | API_BASE_URL=%s | MODEL_NAME=%s",
         getattr(agent, "name", agent.__class__.__name__),
         getattr(agent, "api_base_url", get_env("API_BASE_URL", "APIBASEURL", default="https://router.huggingface.co/v1")),
-        getattr(agent, "model_name", get_env("MODEL_NAME", "MODELNAME", default="<agentic-heuristic>")),
+        getattr(agent, "model_name", get_env("MODEL_NAME", "MODELNAME", default="<snapshot-calibrated>")),
     )
 
     easy_predictions, easy_ground_truth, easy_confidences, agent, easy_reward = run_task(env, agent, "easy")
@@ -334,7 +340,7 @@ def main() -> Dict[str, object]:
     grading_result["metadata"] = {
         "agent_name": getattr(agent, "name", agent.__class__.__name__),
         "api_base_url": getattr(agent, "api_base_url", get_env("API_BASE_URL", "APIBASEURL", default="https://router.huggingface.co/v1")),
-        "model_name": getattr(agent, "model_name", get_env("MODEL_NAME", "MODELNAME", default="<agentic-heuristic>")),
+        "model_name": getattr(agent, "model_name", get_env("MODEL_NAME", "MODELNAME", default="<snapshot-calibrated>")),
         "seed": 42,
         "data_snapshot": env.data_loader.get_bundle_summary(),
         "tasks": {

@@ -894,10 +894,11 @@ class FraudDataLoader:
         )
 
         note = TASK_SPECS[task_name]["focus"]
-        if fraud_ring_group is not None:
-            note = "Multiple hard-task cases reuse the same seller and device cluster."
-        elif flash_sale_group is not None:
-            note = "This seller is running a flash sale, so high order velocity may still be legitimate."
+        if task_name == "hard":
+            if fraud_ring_group is not None or flash_sale_group is not None:
+                note = "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes."
+            else:
+                note = "Hard-mode cases contain overlapping signals that benefit from graph and operations review."
 
         return {
             "task_focus": TASK_SPECS[task_name]["focus"],
@@ -908,6 +909,7 @@ class FraudDataLoader:
             "recent_refunds_7d": recent_refunds,
             "cluster_alert_score": cluster_alert,
             "network_pattern": note,
+            "operations_context": note,
             "sequence_bucket": local_index + 1,
             "device_match": transaction_data["device_country"] == transaction_data["shipping_address"],
         }

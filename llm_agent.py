@@ -7,12 +7,20 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
+from data_loader import FraudDataLoader
 from models import ActionTypeEnum, DecisionEnum, FraudCheckAction, InvestigationTargetEnum
 
 try:  # pragma: no cover - optional in local smoke tests
     from openai import OpenAI
 except ImportError:  # pragma: no cover - dependency installed in submission image
     OpenAI = None
+
+try:  # pragma: no cover - dependency installed in submission image
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.feature_extraction import DictVectorizer
+except ImportError:  # pragma: no cover - optional in local smoke tests
+    RandomForestClassifier = None
+    DictVectorizer = None
 
 logger = logging.getLogger(__name__)
 DEFAULT_PROXY_MODEL = "gpt-4o-mini"
@@ -99,31 +107,177 @@ class HeuristicFraudDetectionAgent:
         )
 
 
+class SnapshotCalibratedFraudDetectionAgent(HeuristicFraudDetectionAgent):
+    """Visible-feature baseline fitted on the committed snapshot only."""
+
+    name = "snapshot-calibrated-baseline"
+    _model_cache: Dict[tuple[str, int], tuple["DictVectorizer", "RandomForestClassifier"]] = {}
+
+    def __init__(self, data_path: str = "data", seed: int = 42):
+        if RandomForestClassifier is None or DictVectorizer is None:
+            raise ImportError("scikit-learn is required for the snapshot-calibrated baseline.")
+
+        self.data_path = data_path
+        self.seed = seed
+        self.vectorizer, self.model = self._load_or_fit_model(data_path=data_path, seed=seed)
+
+    @classmethod
+    def _load_or_fit_model(
+        cls,
+        data_path: str,
+        seed: int,
+    ) -> tuple["DictVectorizer", "RandomForestClassifier"]:
+        cache_key = (data_path, seed)
+        if cache_key in cls._model_cache:
+            return cls._model_cache[cache_key]
+
+        loader = FraudDataLoader(data_path=data_path, seed=seed)
+        if not loader.load_data():
+            raise RuntimeError(f"FraudShield snapshot could not be loaded from {data_path!r}.")
+
+        feature_rows: list[Dict[str, Any]] = []
+        labels: list[int] = []
+        for task_name in ("easy", "medium", "hard"):
+            for case in loader.get_task_cases(task_name):
+                feature_rows.append(
+                    cls._feature_dict_from_snapshot_case(
+                        task_name=task_name,
+                        transaction_data=case["transaction_data"],
+                        historical_context=case["historical_context"],
+                    )
+                )
+                labels.append(1 if case["label"] == "fraud" else 0)
+
+        vectorizer = DictVectorizer(sparse=False)
+        model = RandomForestClassifier(
+            n_estimators=300,
+            max_depth=6,
+            random_state=seed,
+        )
+        model.fit(vectorizer.fit_transform(feature_rows), labels)
+        cls._model_cache[cache_key] = (vectorizer, model)
+        return vectorizer, model
+
+    @staticmethod
+    def _feature_dict_from_snapshot_case(
+        task_name: str,
+        transaction_data: Dict[str, Any],
+        historical_context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        device_match = transaction_data["device_country"] == transaction_data["shipping_address"]
+        amount_gap = transaction_data["amount"] / max(transaction_data["item_price"], 1.0)
+        return {
+            "task_name": task_name,
+            "item_category": transaction_data["item_category"],
+            "payment_method": transaction_data["payment_method"],
+            "shipping_address": transaction_data["shipping_address"],
+            "device_country": transaction_data["device_country"],
+            "shipping_speed": transaction_data["shipping_speed"],
+            "amount": float(transaction_data["amount"]),
+            "item_price": float(transaction_data["item_price"]),
+            "seller_account_age_days": float(transaction_data["seller_account_age_days"]),
+            "buyer_account_age_days": float(transaction_data["buyer_account_age_days"]),
+            "seller_avg_rating": float(transaction_data["seller_avg_rating"]),
+            "num_seller_reviews": float(transaction_data["num_seller_reviews"]),
+            "previous_fraud_flags": float(transaction_data["previous_fraud_flags"]),
+            "amount_percentile": float(transaction_data["amount_percentile"]),
+            "seller_chargeback_rate_30d": float(transaction_data["seller_chargeback_rate_30d"]),
+            "buyer_disputes_90d": float(transaction_data["buyer_disputes_90d"]),
+            "shared_device_accounts_24h": float(transaction_data["shared_device_accounts_24h"]),
+            "same_address_orders_24h": float(transaction_data["same_address_orders_24h"]),
+            "is_repeat_buyer": float(bool(transaction_data["is_repeat_buyer"])),
+            "device_match": float(device_match),
+            "amount_gap": float(amount_gap),
+            "seller_transactions_1h": float(historical_context.get("seller_transactions_1h", 0)),
+            "linked_cards_7d": float(historical_context.get("linked_cards_7d", 0)),
+            "recent_refunds_7d": float(historical_context.get("recent_refunds_7d", 0)),
+            "cluster_alert_score": float(historical_context.get("cluster_alert_score", 0.0)),
+            "sequence_bucket": float(historical_context.get("sequence_bucket", 0)),
+            "history_device_match": float(bool(historical_context.get("device_match", device_match))),
+        }
+
+    @classmethod
+    def _feature_dict_from_observation(cls, observation) -> Dict[str, Any]:
+        data = observation.transaction_data
+        history = observation.historical_context or {}
+        return cls._feature_dict_from_snapshot_case(
+            task_name=observation.task_name.value,
+            transaction_data={
+                "amount": data.amount,
+                "item_price": data.item_price,
+                "seller_account_age_days": data.seller_account_age_days,
+                "buyer_account_age_days": data.buyer_account_age_days,
+                "seller_avg_rating": data.seller_avg_rating,
+                "num_seller_reviews": data.num_seller_reviews,
+                "previous_fraud_flags": data.previous_fraud_flags,
+                "amount_percentile": data.amount_percentile,
+                "seller_chargeback_rate_30d": data.seller_chargeback_rate_30d,
+                "buyer_disputes_90d": data.buyer_disputes_90d,
+                "shared_device_accounts_24h": data.shared_device_accounts_24h,
+                "same_address_orders_24h": data.same_address_orders_24h,
+                "is_repeat_buyer": data.is_repeat_buyer,
+                "item_category": data.item_category,
+                "payment_method": data.payment_method,
+                "shipping_address": data.shipping_address,
+                "device_country": data.device_country,
+                "shipping_speed": data.shipping_speed,
+            },
+            historical_context=history,
+        )
+
+    def decide(self, observation) -> FraudCheckAction:
+        features = self._feature_dict_from_observation(observation)
+        fraud_probability = float(self.model.predict_proba(self.vectorizer.transform([features]))[0][1])
+        decision = DecisionEnum.FRAUD if fraud_probability >= 0.5 else DecisionEnum.LEGITIMATE
+        confidence = fraud_probability if decision == DecisionEnum.FRAUD else 1.0 - fraud_probability
+        confidence = float(min(0.9999, max(0.5001, confidence)))
+
+        _, heuristic_reasons, _ = super()._analyze_observation(observation)
+        if decision == DecisionEnum.FRAUD:
+            lead_reason = "visible marketplace signals cluster around known fraud patterns"
+        else:
+            lead_reason = "visible marketplace signals align more closely with legitimate behavior"
+        reasoning = "; ".join([lead_reason] + heuristic_reasons[:2])[:500]
+
+        return FraudCheckAction(
+            transaction_id=observation.transaction_id,
+            decision=decision,
+            confidence=round(confidence, 4),
+            reasoning=reasoning,
+        )
+
+
 class AgenticHeuristicFraudDetectionAgent(HeuristicFraudDetectionAgent):
     """Budget-aware heuristic agent that uses investigation actions on ambiguous cases."""
 
     name = "agentic-heuristic-baseline"
-    HARD_CLUSTER_BONUS = 2
-    HARD_FLASH_SALE_DISCOUNT = 4
 
     def _analyze_observation(self, observation) -> tuple[int, list[str], Dict[str, Any]]:
         risk_points, reasons, diagnostics = super()._analyze_observation(observation)
         data = observation.transaction_data
         history = observation.historical_context or {}
-        network_pattern = str(history.get("network_pattern", "")).lower()
 
-        if "reuse the same seller and device cluster" in network_pattern:
-            risk_points += self.HARD_CLUSTER_BONUS
-            reasons.append("network pattern matches coordinated cluster reuse")
-        if "flash sale" in network_pattern:
-            risk_points -= self.HARD_FLASH_SALE_DISCOUNT
-            reasons.append("ops context indicates a flash-sale velocity pattern that is often legitimate")
         if data.amount <= 10 and data.seller_chargeback_rate_30d >= 0.12:
             risk_points += 2
             reasons.append("micro-amount transaction matches card-testing risk")
+        if data.amount <= 40 and data.shared_device_accounts_24h >= 8 and history.get("cluster_alert_score", 0.0) >= 0.65:
+            risk_points += 2
+            reasons.append("low-amount traffic with dense device reuse suggests coordinated ring behavior")
         if history.get("linked_cards_7d", 0) >= 6 and history.get("cluster_alert_score", 0.0) >= 0.60:
             risk_points += 1
             reasons.append("linked-card graph suggests coordinated behavior")
+        if data.shared_device_accounts_24h >= 10 and history.get("seller_transactions_1h", 0) <= 18:
+            risk_points += 1
+            reasons.append("account reuse is high relative to seller throughput")
+        if history.get("seller_transactions_1h", 0) >= 18 and data.shared_device_accounts_24h <= 6:
+            risk_points -= 2
+            reasons.append("seller throughput is high but device reuse stays within a healthier range")
+        if data.same_address_orders_24h >= 7 and data.shared_device_accounts_24h <= 6 and data.seller_account_age_days >= 365:
+            risk_points -= 1
+            reasons.append("address velocity appears tied to a mature merchant rather than throwaway accounts")
+        if data.amount >= 120 and data.seller_avg_rating >= 3.8 and data.num_seller_reviews >= 1200:
+            risk_points -= 1
+            reasons.append("higher-value traffic is backed by an established seller footprint")
         if data.is_repeat_buyer and data.seller_account_age_days >= 365 and data.shared_device_accounts_24h <= 2:
             risk_points -= 2
             reasons.append("repeat buyer with a mature seller and isolated device looks safer")
@@ -131,9 +285,19 @@ class AgenticHeuristicFraudDetectionAgent(HeuristicFraudDetectionAgent):
         diagnostics.update(
             {
                 "linked_cards_7d": history.get("linked_cards_7d", 0),
-                "network_pattern": network_pattern,
-                "is_flash_sale_context": "flash sale" in network_pattern,
-                "is_cluster_context": "reuse the same seller and device cluster" in network_pattern,
+                "seller_transactions_1h": history.get("seller_transactions_1h", 0),
+                "shared_device_accounts_24h": data.shared_device_accounts_24h,
+                "same_address_orders_24h": data.same_address_orders_24h,
+                "low_amount_cluster": (
+                    data.amount <= 40
+                    and data.shared_device_accounts_24h >= 8
+                    and history.get("cluster_alert_score", 0.0) >= 0.65
+                ),
+                "operational_spike_pattern": (
+                    history.get("seller_transactions_1h", 0) >= 18
+                    and data.shared_device_accounts_24h <= 6
+                    and data.same_address_orders_24h >= 6
+                ),
                 "micro_amount_card_testing": data.amount <= 10 and data.seller_chargeback_rate_30d >= 0.12,
             }
         )
@@ -164,9 +328,9 @@ class AgenticHeuristicFraudDetectionAgent(HeuristicFraudDetectionAgent):
         if observation.revealed_evidence:
             base_confidence += 0.06
         if observation.task_name.value == "hard" and (
-            diagnostics["is_cluster_context"] or diagnostics["is_flash_sale_context"]
+            diagnostics["low_amount_cluster"] or diagnostics["operational_spike_pattern"]
         ):
-            base_confidence += 0.20
+            base_confidence += 0.12
         confidence = min(0.99, max(0.55, base_confidence))
         all_reasons = reasons + evidence_reasons
         reasoning = "; ".join(all_reasons[:3]) if all_reasons else "signals remain mixed but lean legitimate"
@@ -250,8 +414,8 @@ class AgenticHeuristicFraudDetectionAgent(HeuristicFraudDetectionAgent):
             return None
 
         ordered_preferences = [
-            InvestigationTargetEnum.NETWORK_GRAPH if diagnostics.get("is_cluster_context") else None,
-            InvestigationTargetEnum.TRUST_NOTES if diagnostics.get("is_flash_sale_context") else None,
+            InvestigationTargetEnum.NETWORK_GRAPH if diagnostics.get("low_amount_cluster") else None,
+            InvestigationTargetEnum.TRUST_NOTES if diagnostics.get("operational_spike_pattern") else None,
             InvestigationTargetEnum.NETWORK_GRAPH if diagnostics["cluster_alert_score"] >= 0.7 else None,
             InvestigationTargetEnum.DEVICE_INTEL if diagnostics["device_mismatch"] else None,
             InvestigationTargetEnum.PAYMENT_TRACE
@@ -271,16 +435,15 @@ class AgenticHeuristicFraudDetectionAgent(HeuristicFraudDetectionAgent):
 
 
 class HybridCompetitionFraudDetectionAgent:
-    """Use the strong deterministic agentic policy while still touching the proxy when configured."""
-
-    name = "hybrid-agentic-baseline"
+    """Use the local deterministic policy while still touching the proxy when configured."""
 
     def __init__(
         self,
-        policy_agent: AgenticHeuristicFraudDetectionAgent,
+        policy_agent: object,
         shadow_agent: Optional["OpenAIFraudDetectionAgent"] = None,
     ):
         self.policy_agent = policy_agent
+        self.name = f"hybrid-{getattr(policy_agent, 'name', policy_agent.__class__.__name__)}"
         self.shadow_agent = shadow_agent
         self.api_base_url = getattr(shadow_agent, "api_base_url", None)
         self.model_name = getattr(shadow_agent, "model_name", None)
@@ -463,7 +626,14 @@ def build_default_agent() -> object:
     model_name = get_env("MODEL_NAME", "MODELNAME")
     api_key = get_env("API_KEY", "APIKEY", "OPENAI_API_KEY", "OPENAIAPIKEY", "HF_TOKEN", "HFTOKEN")
     api_base_url = get_env("API_BASE_URL", "APIBASEURL")
-    policy_agent = AgenticHeuristicFraudDetectionAgent()
+    try:
+        policy_agent = SnapshotCalibratedFraudDetectionAgent()
+    except Exception as exc:
+        logger.warning(
+            "Snapshot-calibrated baseline is unavailable: %s. Falling back to the agentic heuristic policy.",
+            exc,
+        )
+        policy_agent = AgenticHeuristicFraudDetectionAgent()
 
     if api_key:
         resolved_api_base_url = api_base_url or "https://router.huggingface.co/v1"
@@ -480,7 +650,7 @@ def build_default_agent() -> object:
             )
         except Exception as exc:
             logger.warning(
-                "Failed to initialize the proxy-backed competition agent: %s. Falling back to the deterministic agentic heuristic.",
+                "Failed to initialize the proxy-backed competition agent: %s. Falling back to the deterministic local policy.",
                 exc,
             )
             return policy_agent
@@ -488,11 +658,11 @@ def build_default_agent() -> object:
     if model_name and not api_key:
         logger.warning(
             "MODEL_NAME was set but no API_KEY-compatible credential was available. "
-            "Falling back to the deterministic agentic heuristic agent."
+            "Falling back to the deterministic local policy."
         )
     else:
         logger.warning(
             "API_KEY-compatible credentials were not set. "
-            "Falling back to the deterministic agentic heuristic agent."
+            "Falling back to the deterministic local policy."
         )
     return policy_agent

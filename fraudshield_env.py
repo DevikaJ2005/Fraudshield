@@ -599,7 +599,7 @@ class FraudShieldEnvironment:
             transaction_data=TransactionData(**current_case["transaction_data"]),
             task_name=self.current_task,
             episode_step=self.step_count + 1,
-            historical_context=current_case["historical_context"],
+            historical_context=self._sanitize_historical_context(current_case),
             visible_signal_summary=self.current_visible_signal_summary,
             available_investigations=available_targets,
             revealed_evidence=self.current_revealed_evidence,
@@ -645,3 +645,38 @@ class FraudShieldEnvironment:
             investigation_budget_remaining=0,
             case_stage="completed",
         )
+
+    def _sanitize_historical_context(self, current_case: Dict[str, Any]) -> Dict[str, Any]:
+        """Expose only non-leaky historical fields to agents."""
+
+        history = current_case["historical_context"]
+        return {
+            "task_focus": history.get("task_focus"),
+            "snapshot_id": history.get("snapshot_id"),
+            "source_id": history.get("source_id"),
+            "seller_transactions_1h": history.get("seller_transactions_1h", 0),
+            "linked_cards_7d": history.get("linked_cards_7d", 0),
+            "recent_refunds_7d": history.get("recent_refunds_7d", 0),
+            "cluster_alert_score": history.get("cluster_alert_score", 0.0),
+            "sequence_bucket": history.get("sequence_bucket", 0),
+            "device_match": history.get("device_match", True),
+            "operations_context": self._operations_context_note(current_case),
+        }
+
+    def _operations_context_note(self, current_case: Dict[str, Any]) -> str:
+        """Provide a neutral queue-level note without exposing label-like hints."""
+
+        txn = current_case["transaction_data"]
+        history = current_case["historical_context"]
+
+        if self.current_task == TaskDifficulty.HARD:
+            if txn["shared_device_accounts_24h"] >= 8 and history.get("cluster_alert_score", 0.0) >= 0.65:
+                return "Hard-mode queue includes coordinated-activity pressure that may require graph evidence."
+            if history.get("seller_transactions_1h", 0) >= 18 and txn["same_address_orders_24h"] >= 6:
+                return "Hard-mode queue also includes legitimate operational spikes that can resemble abuse."
+            return "Hard-mode cases mix coordinated-abuse pressure with legitimate operational noise."
+
+        if self.current_task == TaskDifficulty.MEDIUM:
+            return "Medium-mode reviews contain mixed signals where no single feature is decisive."
+
+        return "Easy-mode reviews emphasize clearer single-transaction signals."

@@ -2518,7 +2518,7 @@
           "linked_cards_7d": 6,
           "recent_refunds_7d": 4,
           "cluster_alert_score": 0.716,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 15,
           "device_match": false
         }
@@ -2559,7 +2559,7 @@
           "linked_cards_7d": 2,
           "recent_refunds_7d": 6,
           "cluster_alert_score": 0.734,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 23,
           "device_match": true
         }
@@ -2600,7 +2600,7 @@
           "linked_cards_7d": 7,
           "recent_refunds_7d": 0,
           "cluster_alert_score": 0.61,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 15,
           "device_match": true
         }
@@ -2641,7 +2641,7 @@
           "linked_cards_7d": 7,
           "recent_refunds_7d": 4,
           "cluster_alert_score": 0.543,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 5,
           "device_match": true
         }
@@ -2682,7 +2682,7 @@
           "linked_cards_7d": 7,
           "recent_refunds_7d": 4,
           "cluster_alert_score": 0.698,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 10,
           "device_match": true
         }
@@ -2723,7 +2723,7 @@
           "linked_cards_7d": 2,
           "recent_refunds_7d": 3,
           "cluster_alert_score": 0.53,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 3,
           "device_match": false
         }
@@ -2764,7 +2764,7 @@
           "linked_cards_7d": 5,
           "recent_refunds_7d": 2,
           "cluster_alert_score": 0.729,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 20,
           "device_match": false
         }
@@ -2805,7 +2805,7 @@
           "linked_cards_7d": 7,
           "recent_refunds_7d": 6,
           "cluster_alert_score": 0.697,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 9,
           "device_match": true
         }
@@ -2846,7 +2846,7 @@
           "linked_cards_7d": 2,
           "recent_refunds_7d": 6,
           "cluster_alert_score": 0.691,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 8,
           "device_match": true
         }
@@ -2887,7 +2887,7 @@
           "linked_cards_7d": 4,
           "recent_refunds_7d": 4,
           "cluster_alert_score": 0.596,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 13,
           "device_match": true
         }
@@ -2928,7 +2928,7 @@
           "linked_cards_7d": 3,
           "recent_refunds_7d": 2,
           "cluster_alert_score": 0.556,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 7,
           "device_match": false
         }
@@ -2969,7 +2969,7 @@
           "linked_cards_7d": 3,
           "recent_refunds_7d": 4,
           "cluster_alert_score": 0.727,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 19,
           "device_match": false
         }
@@ -3010,7 +3010,7 @@
           "linked_cards_7d": 4,
           "recent_refunds_7d": 1,
           "cluster_alert_score": 0.685,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 6,
           "device_match": true
         }
@@ -3051,7 +3051,7 @@
           "linked_cards_7d": 3,
           "recent_refunds_7d": 5,
           "cluster_alert_score": 0.709,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 12,
           "device_match": false
         }
@@ -3092,7 +3092,7 @@
           "linked_cards_7d": 1,
           "recent_refunds_7d": 5,
           "cluster_alert_score": 0.549,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 6,
           "device_match": false
         }
@@ -3133,7 +3133,7 @@
           "linked_cards_7d": 3,
           "recent_refunds_7d": 4,
           "cluster_alert_score": 0.681,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 5,
           "device_match": false
         }
@@ -3174,7 +3174,7 @@
           "linked_cards_7d": 4,
           "recent_refunds_7d": 2,
           "cluster_alert_score": 0.633,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 18,
           "device_match": true
         }
@@ -3215,7 +3215,7 @@
           "linked_cards_7d": 8,
           "recent_refunds_7d": 4,
           "cluster_alert_score": 0.562,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 8,
           "device_match": false
         }
@@ -3256,7 +3256,7 @@
           "linked_cards_7d": 5,
           "recent_refunds_7d": 0,
           "cluster_alert_score": 0.689,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 7,
           "device_match": true
         }
@@ -3297,7 +3297,7 @@
           "linked_cards_7d": 2,
           "recent_refunds_7d": 5,
           "cluster_alert_score": 0.582,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 11,
           "device_match": true
         }
@@ -3338,7 +3338,7 @@
           "linked_cards_7d": 6,
           "recent_refunds_7d": 1,
           "cluster_alert_score": 0.732,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 22,
           "device_match": true
         }
@@ -3379,7 +3379,7 @@
           "linked_cards_7d": 2,
           "recent_refunds_7d": 2,
           "cluster_alert_score": 0.37,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 1,
           "device_match": true
         }
@@ -3420,7 +3420,7 @@
           "linked_cards_7d": 1,
           "recent_refunds_7d": 4,
           "cluster_alert_score": 0.725,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 18,
           "device_match": false
         }
@@ -3461,7 +3461,7 @@
           "linked_cards_7d": 2,
           "recent_refunds_7d": 2,
           "cluster_alert_score": 0.575,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 10,
           "device_match": true
         }
@@ -3502,7 +3502,7 @@
           "linked_cards_7d": 5,
           "recent_refunds_7d": 5,
           "cluster_alert_score": 0.729,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 21,
           "device_match": true
         }
@@ -3543,7 +3543,7 @@
           "linked_cards_7d": 1,
           "recent_refunds_7d": 4,
           "cluster_alert_score": 0.518,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 2,
           "device_match": true
         }
@@ -3584,7 +3584,7 @@
           "linked_cards_7d": 2,
           "recent_refunds_7d": 2,
           "cluster_alert_score": 0.71,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 13,
           "device_match": false
         }
@@ -3625,7 +3625,7 @@
           "linked_cards_7d": 7,
           "recent_refunds_7d": 1,
           "cluster_alert_score": 0.617,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 16,
           "device_match": false
         }
@@ -3666,7 +3666,7 @@
           "linked_cards_7d": 7,
           "recent_refunds_7d": 2,
           "cluster_alert_score": 0.603,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 14,
           "device_match": true
         }
@@ -3707,7 +3707,7 @@
           "linked_cards_7d": 5,
           "recent_refunds_7d": 3,
           "cluster_alert_score": 0.643,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 19,
           "device_match": false
         }
@@ -3748,7 +3748,7 @@
           "linked_cards_7d": 2,
           "recent_refunds_7d": 4,
           "cluster_alert_score": 0.625,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 17,
           "device_match": true
         }
@@ -3789,7 +3789,7 @@
           "linked_cards_7d": 3,
           "recent_refunds_7d": 3,
           "cluster_alert_score": 0.666,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 21,
           "device_match": false
         }
@@ -3830,7 +3830,7 @@
           "linked_cards_7d": 2,
           "recent_refunds_7d": 3,
           "cluster_alert_score": 0.605,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 3,
           "device_match": true
         }
@@ -3871,7 +3871,7 @@
           "linked_cards_7d": 2,
           "recent_refunds_7d": 5,
           "cluster_alert_score": 0.518,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 1,
           "device_match": true
         }
@@ -3912,7 +3912,7 @@
           "linked_cards_7d": 5,
           "recent_refunds_7d": 5,
           "cluster_alert_score": 0.653,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 20,
           "device_match": true
         }
@@ -3953,7 +3953,7 @@
           "linked_cards_7d": 3,
           "recent_refunds_7d": 6,
           "cluster_alert_score": 0.537,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 4,
           "device_match": true
         }
@@ -3994,7 +3994,7 @@
           "linked_cards_7d": 4,
           "recent_refunds_7d": 5,
           "cluster_alert_score": 0.524,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 2,
           "device_match": false
         }
@@ -4035,7 +4035,7 @@
           "linked_cards_7d": 1,
           "recent_refunds_7d": 5,
           "cluster_alert_score": 0.723,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 17,
           "device_match": true
         }
@@ -4076,7 +4076,7 @@
           "linked_cards_7d": 2,
           "recent_refunds_7d": 0,
           "cluster_alert_score": 0.681,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 22,
           "device_match": false
         }
@@ -4117,7 +4117,7 @@
           "linked_cards_7d": 7,
           "recent_refunds_7d": 4,
           "cluster_alert_score": 0.75,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 24,
           "device_match": true
         }
@@ -4158,7 +4158,7 @@
           "linked_cards_7d": 4,
           "recent_refunds_7d": 4,
           "cluster_alert_score": 0.713,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 14,
           "device_match": false
         }
@@ -4199,7 +4199,7 @@
           "linked_cards_7d": 4,
           "recent_refunds_7d": 6,
           "cluster_alert_score": 0.635,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 4,
           "device_match": false
         }
@@ -4240,7 +4240,7 @@
           "linked_cards_7d": 6,
           "recent_refunds_7d": 2,
           "cluster_alert_score": 0.703,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 11,
           "device_match": true
         }
@@ -4281,7 +4281,7 @@
           "linked_cards_7d": 2,
           "recent_refunds_7d": 4,
           "cluster_alert_score": 0.719,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 16,
           "device_match": false
         }
@@ -4322,7 +4322,7 @@
           "linked_cards_7d": 4,
           "recent_refunds_7d": 6,
           "cluster_alert_score": 0.738,
-          "network_pattern": "Multiple hard-task cases reuse the same seller and device cluster.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 24,
           "device_match": false
         }
@@ -4363,7 +4363,7 @@
           "linked_cards_7d": 5,
           "recent_refunds_7d": 6,
           "cluster_alert_score": 0.589,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 12,
           "device_match": true
         }
@@ -4404,7 +4404,7 @@
           "linked_cards_7d": 7,
           "recent_refunds_7d": 2,
           "cluster_alert_score": 0.569,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 9,
           "device_match": true
         }
@@ -4445,7 +4445,7 @@
           "linked_cards_7d": 2,
           "recent_refunds_7d": 2,
           "cluster_alert_score": 0.7,
-          "network_pattern": "This seller is running a flash sale, so high order velocity may still be legitimate.",
+          "network_pattern": "Hard-mode cases can reflect either coordinated abuse pressure or legitimate operational spikes.",
           "sequence_bucket": 23,
           "device_match": true
         }
