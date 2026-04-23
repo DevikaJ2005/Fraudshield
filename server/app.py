@@ -1,4 +1,4 @@
-"""FastAPI server exposing the FraudShield OpenEnv environment."""
+"""FastAPI server exposing the FraudShield FraudOps environment."""
 
 from __future__ import annotations
 
@@ -12,44 +12,42 @@ from typing import Any, Dict
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
-from fraudshield_env import FraudShieldEnvironment
+from fraudshield_env import FraudShieldEnvironment, TASK_CONFIG
 from models import (
+    ActionTypeEnum,
+    CaseScreenEnum,
+    EpisodeState,
     FraudCheckAction,
     FraudCheckObservation,
-    InvestigationTargetEnum,
     ResetResult,
     Reward,
     StepResult,
     TaskDifficulty,
-    EpisodeState,
 )
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DATA_PATH = Path(__file__).resolve().parents[1] / "data"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.4.0"
 
 TASK_DESCRIPTIONS = {
     TaskDifficulty.EASY: {
         "difficulty": "easy",
         "description": (
-            "Low-noise triage cases with strong single-transaction signals. "
-            "A good agent should decide quickly and only investigate when a high-value signal conflicts."
+            "One low-noise case. The agent should open the case, document it, and route it correctly without wasting time."
         ),
     },
     TaskDifficulty.MEDIUM: {
         "difficulty": "medium",
         "description": (
-            "Mixed-signal fraud reviews where partial observability matters. "
-            "Investigations help separate risky-but-legitimate traffic from genuine abuse."
+            "One ambiguous case where customer history and policy review are needed before the correct routing appears."
         ),
     },
     TaskDifficulty.HARD: {
         "difficulty": "hard",
         "description": (
-            "Coordinated abuse and flash-sale edge cases. "
-            "Agents must balance investigation budget, ambiguity, and business cost."
+            "Two linked fraud cases that require network reasoning, policy-aware escalation, and consistent case notes."
         ),
     },
 }
@@ -59,10 +57,10 @@ env = FraudShieldEnvironment(data_path=str(DATA_PATH), seed=42)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    """Load the bundled task set when the API process starts."""
+    """Load bundled task data on server startup."""
 
     if not env.load_data():
-        logger.error("FraudShield failed to load its bundled data from %s", DATA_PATH)
+        logger.error("FraudShield failed to load bundled data from %s", DATA_PATH)
     yield
     logger.info("FraudShield server shutting down")
 
@@ -70,8 +68,8 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     title="FraudShield",
     description=(
-        "OpenEnv-compatible marketplace fraud investigation environment with typed "
-        "actions, dense rewards, and optional multi-step evidence gathering."
+        "OpenEnv-compatible enterprise FraudOps environment where agents investigate cases across "
+        "queue, profile, and policy tools before resolving or escalating them."
     ),
     version=APP_VERSION,
     docs_url="/docs",
@@ -89,9 +87,10 @@ def _task_payload() -> Dict[str, Any]:
     return {
         task.value: {
             **TASK_DESCRIPTIONS[task],
-            "num_transactions": env.case_counts[task],
-            "max_steps": env.max_steps[task],
-            "investigation_budget_per_case": env.investigation_budget_per_case[task],
+            "num_cases": TASK_CONFIG[task]["num_cases"],
+            "max_steps": TASK_CONFIG[task]["max_steps"],
+            "sla_limit": TASK_CONFIG[task]["sla_limit"],
+            "apps": [screen.value for screen in CaseScreenEnum],
         }
         for task in TaskDifficulty
     }
@@ -104,9 +103,8 @@ def _metadata_payload() -> Dict[str, Any]:
         "title": "FraudShield",
         "version": APP_VERSION,
         "description": (
-            "Agentic marketplace trust-and-safety environment for transaction review. "
-            "Agents may either make a final decision or spend limited budget to reveal "
-            "extra evidence before deciding."
+            "Enterprise fraud-operations environment for OpenEnv. Agents investigate queue cases, "
+            "fetch evidence from internal tools, write notes, and resolve or escalate under SLA pressure."
         ),
         "transport": {
             "rest": {
@@ -122,37 +120,23 @@ def _metadata_payload() -> Dict[str, Any]:
             "mcp": "/mcp",
             "openapi": "/openapi.json",
         },
-        "action_families": ["decide", "investigate"],
-        "investigation_targets": [target.value for target in InvestigationTargetEnum],
+        "action_families": [action.value for action in ActionTypeEnum],
+        "apps": [screen.value for screen in CaseScreenEnum],
         "tasks": _task_payload(),
         "data_snapshot": env.data_loader.get_bundle_summary(),
     }
 
 
 def _schema_payload() -> Dict[str, Any]:
-    action_schema = FraudCheckAction.model_json_schema()
-    observation_schema = FraudCheckObservation.model_json_schema()
-    reward_schema = Reward.model_json_schema()
-    state_schema = EpisodeState.model_json_schema()
-    reset_schema = ResetResult.model_json_schema()
-    step_schema = StepResult.model_json_schema()
     return {
         "name": "fraudshield",
         "version": APP_VERSION,
-        "action": action_schema,
-        "observation": observation_schema,
-        "reward": reward_schema,
-        "state": state_schema,
-        "reset_result": reset_schema,
-        "step_result": step_schema,
-        "models": {
-            "action": action_schema,
-            "observation": observation_schema,
-            "reward": reward_schema,
-            "state": state_schema,
-            "reset_result": reset_schema,
-            "step_result": step_schema,
-        },
+        "action": FraudCheckAction.model_json_schema(),
+        "observation": FraudCheckObservation.model_json_schema(),
+        "reward": Reward.model_json_schema(),
+        "state": EpisodeState.model_json_schema(),
+        "reset_result": ResetResult.model_json_schema(),
+        "step_result": StepResult.model_json_schema(),
         "tasks": _task_payload(),
     }
 
@@ -174,36 +158,36 @@ def _mcp_tool_result(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _mcp_tool_descriptors() -> list[Dict[str, Any]]:
-    task_enum_values = [task.value for task in TaskDifficulty]
+    task_values = [task.value for task in TaskDifficulty]
     return [
         {
             "name": "environment.reset",
-            "description": "Start a new episode for easy, medium, or hard review.",
+            "description": "Start a new easy, medium, or hard FraudOps episode.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "task": {"type": "string", "enum": task_enum_values, "default": TaskDifficulty.EASY.value}
+                    "task": {"type": "string", "enum": task_values, "default": TaskDifficulty.EASY.value}
                 },
             },
         },
         {
             "name": "environment.step",
-            "description": "Submit either a final decision or an investigation request.",
+            "description": "Submit one enterprise workflow action for the active case.",
             "inputSchema": FraudCheckAction.model_json_schema(),
         },
         {
             "name": "environment.state",
-            "description": "Get the current episode state without changing it.",
+            "description": "Read the current episode state without changing it.",
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
             "name": "environment.info",
-            "description": "Read static environment information and snapshot details.",
+            "description": "Read static environment information and task metadata.",
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
             "name": "environment.tasks",
-            "description": "List the graded task variants and budgets.",
+            "description": "List the three graded FraudOps tasks.",
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
@@ -213,7 +197,7 @@ def _mcp_tool_descriptors() -> list[Dict[str, Any]]:
         },
         {
             "name": "environment.schema",
-            "description": "Read JSON schemas for the typed environment models.",
+            "description": "Read the JSON schema for the typed models.",
             "inputSchema": {"type": "object", "properties": {}},
         },
     ]
@@ -225,11 +209,7 @@ def _run_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     if name == "environment.reset":
         task = arguments.get("task", TaskDifficulty.EASY.value)
         result = env.reset(str(task))
-        return {
-            "observation": result.observation.model_dump(mode="json"),
-            "info": result.info,
-            "episode_id": env.episode_id,
-        }
+        return {"observation": result.observation.model_dump(mode="json"), "info": result.info}
     if name == "environment.step":
         action = FraudCheckAction.model_validate(arguments)
         result = env.step(action)
@@ -245,15 +225,7 @@ def _run_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "name": "fraudshield",
             "version": APP_VERSION,
-            "description": "Marketplace fraud investigation environment built from a frozen public-data snapshot.",
-            "tasks": {
-                task.value: {
-                    "max_steps": env.max_steps[task],
-                    "num_transactions": env.case_counts[task],
-                }
-                for task in TaskDifficulty
-            },
-            "data_path": str(DATA_PATH),
+            "tasks": _task_payload(),
             "data_snapshot": env.data_loader.get_bundle_summary(),
         }
     if name == "environment.tasks":
@@ -269,11 +241,11 @@ def _run_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
 async def health_check() -> Dict[str, Any]:
     if not env.data_loaded:
         env.load_data()
-
     return {
         "status": "healthy" if env.data_loaded else "degraded",
         "service": "fraudshield",
         "data_loaded": env.data_loaded,
+        "apps": [screen.value for screen in CaseScreenEnum],
     }
 
 
@@ -282,11 +254,7 @@ async def reset(task: TaskDifficulty = TaskDifficulty.EASY) -> Dict[str, Any]:
     try:
         _ensure_data_loaded()
         result = env.reset(task.value)
-        return {
-            "observation": result.observation.model_dump(mode="json"),
-            "info": result.info,
-            "episode_id": env.episode_id,
-        }
+        return {"observation": result.observation.model_dump(mode="json"), "info": result.info}
     except Exception as exc:
         logger.exception("Reset error")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -324,15 +292,8 @@ async def get_info() -> Dict[str, Any]:
     return {
         "name": "fraudshield",
         "version": APP_VERSION,
-        "description": "Marketplace fraud investigation environment built from a frozen public-data snapshot.",
-        "tasks": {
-            task.value: {
-                "max_steps": env.max_steps[task],
-                "num_transactions": env.case_counts[task],
-            }
-            for task in TaskDifficulty
-        },
-        "data_path": str(DATA_PATH),
+        "description": app.description,
+        "tasks": _task_payload(),
         "data_snapshot": env.data_loader.get_bundle_summary(),
     }
 
@@ -370,9 +331,7 @@ async def mcp_endpoint(request: Dict[str, Any]) -> JSONResponse:
                     "serverInfo": {"name": "fraudshield", "version": APP_VERSION},
                 },
             )
-        if method in {"notifications/initialized", "initialized"}:
-            return _mcp_success(request_id, {})
-        if method == "ping":
+        if method in {"notifications/initialized", "initialized", "ping"}:
             return _mcp_success(request_id, {})
         if method == "tools/list":
             return _mcp_success(request_id, {"tools": _mcp_tool_descriptors()})
@@ -403,10 +362,7 @@ async def root() -> Dict[str, Any]:
     return {
         "service": "FraudShield OpenEnv",
         "version": APP_VERSION,
-        "description": (
-            "Marketplace fraud investigation environment with final-decision actions "
-            "and optional budgeted evidence gathering."
-        ),
+        "description": app.description,
         "endpoints": {
             "health": "GET /health",
             "reset": "POST /reset?task=easy|medium|hard",
@@ -418,6 +374,7 @@ async def root() -> Dict[str, Any]:
             "schema": "GET /schema",
             "mcp": "POST /mcp",
         },
+        "apps": [screen.value for screen in CaseScreenEnum],
         "docs": "/docs",
     }
 

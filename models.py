@@ -1,56 +1,6 @@
-"""Typed models for the FraudShield OpenEnv environment.
+"""Typed models for the FraudShield FraudOps environment."""
 
-This module defines all request/response models using Pydantic v2 for:
-- Type validation (enforced at API and environment boundaries)
-- JSON serialization (FastAPI/HTTP compatibility)
-- Schema generation (OpenAPI docs, IDE type hints)
-- IDE autocompletion (full typing information)
-
-Model Hierarchy:
-  Input Models (Agent → Environment):
-    - FraudCheckAction: Fraud decision submitted by agent
-
-  Output Models (Environment → Agent):
-    - FraudCheckObservation: Transaction facts + history
-    - Reward: Dense reward + metadata
-    - EpisodeState: Full episode snapshot
-    - StepResult: Complete step output (observation + reward + done)
-    - ResetResult: Episode initialization output
-
-  Enums (Controlled vocabularies):
-    - DecisionEnum: "fraud" or "legitimate"
-    - TaskDifficulty: "easy", "medium", or "hard"
-
-  Data Structures:
-    - TransactionData: 20 fields describing a single transaction
-    - Historical context: Prior observations, rolling statistics, etc.
-
-Validation Rules:
-  - Amount/Confidence/Ratings: Bounded ranges (ge/le constraints)
-  - Text fields: Length constraints (min_length/max_length)
-  - Enums: Limited to valid values
-  - Timestamps: ISO-8601 format (enforced by environment)
-
-JSON Serialization:
-  All models use Pydantic's model_dump(mode='json') for HTTP responses.
-  Enums serialized as strings (e.g., {"decision": "fraud"}).
-
-Usage:
-    from models import FraudCheckAction, FraudCheckObservation
-    
-    # Parse incoming action from API request body
-    action = FraudCheckAction.model_validate_json(request_body)
-    
-    # Create response observation
-    obs = FraudCheckObservation(
-        transaction_id="txn_001",
-        transaction_data=TransactionData(...),
-        task_name=TaskDifficulty.EASY,
-        episode_step=1,
-        historical_context={}
-    )
-    response = obs.model_dump(mode='json')  # Serialize to JSON dict
-"""
+from __future__ import annotations
 
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -58,27 +8,8 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-class DecisionEnum(str, Enum):
-    """Fraud review decision emitted by the agent.
-    
-    Valid values:
-        - "fraud": Transaction is fraudulent (should be rejected)
-        - "legitimate": Transaction is legitimate (should be approved)
-    """
-
-    FRAUD = "fraud"
-    LEGITIMATE = "legitimate"
-
-
 class TaskDifficulty(str, Enum):
-    """Supported task difficulties.
-    
-    Tasks differ in transaction count, fraud/legitimate overlap, and signal clarity:
-    
-        - "easy" (45 transactions): Clear separability, obvious fraud markers
-        - "medium" (50 transactions): Mixed signals, calibration matters
-        - "hard" (65 transactions): High overlap, coordinated abuse, edge cases
-    """
+    """Supported graded tasks."""
 
     EASY = "easy"
     MEDIUM = "medium"
@@ -86,462 +17,211 @@ class TaskDifficulty(str, Enum):
 
 
 class ActionTypeEnum(str, Enum):
-    """High-level action families available to an agent."""
+    """Explicit enterprise tool actions available to the agent."""
 
-    DECIDE = "decide"
-    INVESTIGATE = "investigate"
+    REVIEW_TRANSACTION = "review_transaction"
+    FETCH_CUSTOMER_PROFILE = "fetch_customer_profile"
+    FETCH_MERCHANT_PROFILE = "fetch_merchant_profile"
+    FETCH_NETWORK_GRAPH = "fetch_network_graph"
+    CHECK_POLICY = "check_policy"
+    ADD_CASE_NOTE = "add_case_note"
+    RESOLVE_CASE = "resolve_case"
 
 
-class InvestigationTargetEnum(str, Enum):
-    """Evidence bundles an agent can request before making a final decision."""
+class ResolutionEnum(str, Enum):
+    """Final case routing actions."""
 
-    DEVICE_INTEL = "device_intel"
-    PAYMENT_TRACE = "payment_trace"
-    NETWORK_GRAPH = "network_graph"
-    FULFILLMENT_REVIEW = "fulfillment_review"
-    TRUST_NOTES = "trust_notes"
+    APPROVE = "approve"
+    BLOCK = "block"
+    HOLD = "hold"
+    REQUEST_DOCS = "request_docs"
+    ESCALATE = "escalate"
+
+
+class CaseScreenEnum(str, Enum):
+    """Simulated enterprise apps in the FraudOps workflow."""
+
+    QUEUE = "Queue"
+    CASE_CONSOLE = "Case Console"
+    CUSTOMER_PROFILE = "Customer Profile"
+    MERCHANT_PROFILE = "Merchant Profile"
+    POLICY_ESCALATION = "Policy & Escalation"
+
+
+class QueueCaseCard(BaseModel):
+    """Visible queue item shown before deeper investigation."""
+
+    case_id: str = Field(..., description="Unique review case identifier.")
+    priority: str = Field(..., description="Queue priority label.")
+    queue_reason: str = Field(..., description="Short visible reason the case entered the queue.")
+    visible_risk_band: str = Field(..., description="Queue-only coarse risk label.")
+    status: str = Field(..., description="Case status shown in the queue.")
+    linked_case_ids: List[str] = Field(default_factory=list, description="Related cases if visible.")
+
+
+class CaseSummary(BaseModel):
+    """Current high-level summary for the active case."""
+
+    case_id: str = Field(..., description="Active case identifier.")
+    status: str = Field(..., description="Current workflow status.")
+    queue_reason: str = Field(..., description="Short queue reason shown to the agent.")
+    visible_risk_band: str = Field(..., description="Coarse risk band visible without hidden labels.")
+    amount_usd: float = Field(..., ge=0.0, description="Transaction amount visible from the queue or console.")
+    merchant_region: str = Field(..., description="Shipping region or country code.")
+    evidence_collected: List[str] = Field(default_factory=list, description="Evidence bundle keys already revealed.")
+    note_added: bool = Field(..., description="Whether a case note has already been written.")
 
 
 class FraudCheckAction(BaseModel):
-    """Action taken by the reviewing agent for a single transaction.
-    
-    The agent observes a transaction and submits a decision with confidence.
-    The environment returns a reward and the next observation.
-    
-    Attributes:
-        transaction_id: Unique transaction identifier (matches obs.transaction_id).
-        decision: Fraud label ("fraud" or "legitimate").
-        confidence: Confidence in the decision as a probability [0.0, 1.0].
-            - 1.0 = completely confident
-            - 0.5 = maximal uncertainty
-            - 0.0 = completely confident in the opposite class
-            Reward includes calibration penalty: |confidence - is_correct| matters.
-        reasoning: Brief explanation supporting the decision (10-500 chars).
-            Used for ablation studies, not by environment reward function.
-    
-    Validation:
-        - decision: Must be valid DecisionEnum value
-        - confidence: Must be in [0.0, 1.0] (float)
-        - reasoning: Must be 10-500 character string
-    
-    Example:
-        action = FraudCheckAction(
-            transaction_id="txn_001",
-            decision=DecisionEnum.FRAUD,
-            confidence=0.92,
-            reasoning="Seller account created 2 days ago, requested overnight shipping for electronics."
-        )
-    """
+    """Action submitted by an agent to the FraudOps environment."""
 
     model_config = ConfigDict(use_enum_values=False)
 
-    transaction_id: str = Field(..., description="Unique transaction identifier.")
-    action_type: ActionTypeEnum = Field(
-        default=ActionTypeEnum.DECIDE,
-        description="Whether the agent is making a final decision or requesting more evidence.",
-    )
-    investigation_target: Optional[InvestigationTargetEnum] = Field(
+    case_id: str = Field(..., description="Target case identifier for the action.")
+    action_type: ActionTypeEnum = Field(..., description="Enterprise tool action to execute.")
+    note_text: Optional[str] = Field(
         default=None,
-        description="Evidence bundle to reveal when action_type='investigate'.",
+        max_length=600,
+        description="Case note text when action_type='add_case_note'.",
     )
-    decision: Optional[DecisionEnum] = Field(default=None, description="Predicted fraud label.")
-    confidence: Optional[float] = Field(
+    resolution: Optional[ResolutionEnum] = Field(
         default=None,
-        ge=0.0,
-        le=1.0,
-        description="Confidence assigned to the prediction.",
+        description="Final routing outcome when action_type='resolve_case'.",
     )
     reasoning: str = Field(
         default="",
         max_length=500,
-        description="Short explanation supporting the decision or the investigation choice.",
+        description="Short rationale for the selected action.",
     )
 
     @model_validator(mode="after")
-    def validate_action_payload(self) -> "FraudCheckAction":
+    def validate_payload(self) -> "FraudCheckAction":
         reasoning = self.reasoning.strip()
+        note_text = self.note_text.strip() if self.note_text else None
 
-        if self.action_type == ActionTypeEnum.DECIDE:
-            if self.decision is None:
-                raise ValueError("decision is required when action_type='decide'")
-            if self.confidence is None:
-                raise ValueError("confidence is required when action_type='decide'")
-            if len(reasoning) < 10:
-                raise ValueError("reasoning must be at least 10 characters for decision actions")
+        if self.action_type == ActionTypeEnum.ADD_CASE_NOTE:
+            if not note_text or len(note_text) < 12:
+                raise ValueError("note_text must be at least 12 characters when action_type='add_case_note'")
+            if self.resolution is not None:
+                raise ValueError("add_case_note actions must not include resolution")
+        elif self.action_type == ActionTypeEnum.RESOLVE_CASE:
+            if self.resolution is None:
+                raise ValueError("resolution is required when action_type='resolve_case'")
+            if len(reasoning) < 12:
+                raise ValueError("reasoning must be at least 12 characters when action_type='resolve_case'")
+            if note_text is not None:
+                raise ValueError("resolve_case actions must not include note_text")
         else:
-            if self.investigation_target is None:
-                raise ValueError("investigation_target is required when action_type='investigate'")
-            if self.decision is not None or self.confidence is not None:
-                raise ValueError("investigation actions must not include decision or confidence")
-            if reasoning and len(reasoning) < 10:
-                raise ValueError("reasoning must be at least 10 characters when supplied")
+            if note_text is not None or self.resolution is not None:
+                raise ValueError("tool actions must not include note_text or resolution")
 
         self.reasoning = reasoning
+        self.note_text = note_text
         return self
 
 
-class TransactionData(BaseModel):
-    """Observed transaction details exposed to the agent.
-    
-    This model represents a single e-commerce transaction with 20 fields covering:
-    - Transaction basics: amount, item, pricing
-    - Seller context: age, rating, reputation, chargeback rate
-    - Buyer context: age, history, disputes, account sharing
-    - Fraud signals: geographical mismatches, velocity, device analysis
-    
-    All fields are derived from the frozen Kaggle snapshot and enriched with
-    synthetic marketplace context (seller age, disputes, etc.) for realism.
-    
-    Attributes:
-        amount: Checkout total in USD (float ≥ 0.0).
-        seller_id: Unique seller account identifier (string, hashable).
-        buyer_id: Unique buyer account identifier (string, hashable).
-        item_category: Primary product category (e.g., "Electronics", "Apparel").
-        item_price: Listed item price in USD before markup (float ≥ 0.0).
-        shipping_address: 2-letter country code (e.g., "US", "GB", "FR").
-        seller_account_age_days: Days seller account has existed (int ≥ 0).
-            - 0-7: Very new seller (high fraud risk)
-            - 7-90: New seller (moderate risk)
-            - 90+: Established seller (lower risk)
-        buyer_account_age_days: Days buyer account has existed (int ≥ 0).
-        payment_method: Normalized label ("card", "paypal", "bank_transfer", etc.).
-        device_country: Country inferred from device/IP geolocation (2-letter code).
-        timestamp: ISO-8601 transaction timestamp (string).
-        is_repeat_buyer: Whether buyer has purchased from this seller before (bool).
-        seller_avg_rating: Seller average rating from 0.0 to 5.0 (float 0-5).
-        num_seller_reviews: Number of published seller reviews (int ≥ 0).
-        previous_fraud_flags: Historical fraud flags on related accounts (int ≥ 0).
-            - Includes seller account, buyer account, and shared devices
-        shipping_speed: Requested shipping strategy ("standard", "expedited", "overnight").
-        amount_percentile: Transaction amount percentile vs marketplace (float 0-100).
-            - 100 = highest value transaction (high fraud risk if unusual)
-            - 50 = median transaction (baseline risk)
-            - 1 = lowest value transaction
-        seller_chargeback_rate_30d: Seller chargeback ratio in last 30 days (float 0-1).
-            - 0.0 = no chargebacks (very safe)
-            - 0.1+ = concerning chargeback rate (elevated risk)
-        buyer_disputes_90d: Disputes filed by this buyer in last 90 days (int ≥ 0).
-            - 0 = no disputes (trustworthy)
-            - 3+ = dispute pattern (potential malicious buyer)
-        shared_device_accounts_24h: Accounts seen on same device in last 24h (int ≥ 0).
-            - 1 = only this account (normal)
-            - 3+ = multiple accounts (potential fraud ring)
-        same_address_orders_24h: Orders shipped to same address in last 24h (int ≥ 0).
-            - 1 = only this order (normal)
-            - 5+ = velocity attack pattern
-    
-    Validation:
-        - amount, item_price: Must be ≥ 0.0
-        - seller_avg_rating: Must be 0.0-5.0
-        - seller_chargeback_rate_30d: Must be 0.0-1.0
-        - amount_percentile: Must be 0.0-100.0
-        - All `*_days` fields: Must be ≥ 0
-        - All `*_count` fields: Must be ≥ 0
-    
-    Example:
-        txn = TransactionData(
-            amount=150.00,
-            seller_id="seller_123",
-            buyer_id="buyer_456",
-            item_category="Electronics",
-            item_price=140.00,
-            shipping_address="US",
-            seller_account_age_days=2,  # Very new!
-            buyer_account_age_days=15,
-            payment_method="card",
-            device_country="NG",  # Mismatch with shipping_address!
-            timestamp="2023-10-15T14:30:00Z",
-            is_repeat_buyer=False,
-            seller_avg_rating=0.0,  # No history
-            num_seller_reviews=0,
-            previous_fraud_flags=3,
-            shipping_speed="overnight",
-            amount_percentile=99.5,  # Very high value
-            seller_chargeback_rate_30d=0.15,
-            buyer_disputes_90d=2,
-            shared_device_accounts_24h=4,  # Ring pattern
-            same_address_orders_24h=6  # Velocity attack
-        )
-    
-    Note:
-        All numeric values are rounded/discretized for interpretability.
-        Geographic codes follow ISO 3166-1 alpha-2 standard.
-    """
-
-    amount: float = Field(..., ge=0.0, description="Checkout amount in USD.")
-    seller_id: str = Field(..., description="Seller account identifier.")
-    buyer_id: str = Field(..., description="Buyer account identifier.")
-    item_category: str = Field(..., description="Primary product category.")
-    item_price: float = Field(..., ge=0.0, description="Listed item price in USD.")
-    shipping_address: str = Field(..., description="Shipping destination country code.")
-    seller_account_age_days: int = Field(..., ge=0, description="Seller age in days.")
-    buyer_account_age_days: int = Field(..., ge=0, description="Buyer age in days.")
-    payment_method: str = Field(..., description="Normalized payment method label.")
-    device_country: str = Field(..., description="Country inferred from the device/IP.")
-    timestamp: str = Field(..., description="ISO-8601 transaction timestamp.")
-    is_repeat_buyer: bool = Field(..., description="Whether buyer purchased from seller before.")
-    seller_avg_rating: float = Field(..., ge=0.0, le=5.0, description="Seller rating from 0 to 5.")
-    num_seller_reviews: int = Field(..., ge=0, description="Published seller review count.")
-    previous_fraud_flags: int = Field(..., ge=0, description="Historical fraud flags on related accounts.")
-    shipping_speed: str = Field(..., description="Requested shipping speed.")
-    amount_percentile: float = Field(..., ge=0.0, le=100.0, description="Spend percentile versus the marketplace.")
-    seller_chargeback_rate_30d: float = Field(
-        ...,
-        ge=0.0,
-        le=1.0,
-        description="Seller chargeback ratio over the last 30 days.",
-    )
-    buyer_disputes_90d: int = Field(..., ge=0, description="Buyer disputes filed in the last 90 days.")
-    shared_device_accounts_24h: int = Field(
-        ...,
-        ge=0,
-        description="Accounts seen on the same device in the last 24 hours.",
-    )
-    same_address_orders_24h: int = Field(
-        ...,
-        ge=0,
-        description="Orders sent to the same address in the last 24 hours.",
-    )
-
-
 class FraudCheckObservation(BaseModel):
-    """Observation returned to the agent at each environment step.
-    
-    This is the primary input to the agent's policy. It contains the current
-    transaction details and contextual information needed to make a fraud decision.
-    
-    Attributes:
-        transaction_id: Unique identifier for the current transaction (matches action.transaction_id).
-        transaction_data: Complete transaction details (20 fields).
-        task_name: Current task difficulty ("easy", "medium", "hard").
-        episode_step: One-based step number in the episode (1, 2, 3, ...).
-        historical_context: Optional dict with rolling marketplace statistics
-            (e.g., fraud rate in last hour, merchant category patterns).
-            May be None in early implementations.
-    
-    Example:
-        obs = FraudCheckObservation(
-            transaction_id="txn_001",
-            transaction_data=TransactionData(...),
-            task_name=TaskDifficulty.EASY,
-            episode_step=1,
-            historical_context={"fraud_rate_1h": 0.02}
-        )
-    """
+    """Observation returned at reset and after every step."""
 
     model_config = ConfigDict(use_enum_values=False)
 
-    transaction_id: str = Field(..., description="Transaction identifier for the current case.")
-    transaction_data: TransactionData = Field(..., description="Structured transaction facts.")
-    task_name: TaskDifficulty = Field(..., description="Active task difficulty.")
-    episode_step: int = Field(..., ge=1, description="One-based position in the episode.")
-    historical_context: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="Rolling marketplace context relevant to this transaction.",
-    )
-    visible_signal_summary: str = Field(
-        default="",
-        description="Natural-language summary of the currently visible fraud signals.",
-    )
-    available_investigations: List[InvestigationTargetEnum] = Field(
-        default_factory=list,
-        description="Evidence bundles that can still be requested for the active case.",
-    )
+    case_id: str = Field(..., description="Currently active case identifier.")
+    task_name: TaskDifficulty = Field(..., description="Current task difficulty.")
+    current_screen: CaseScreenEnum = Field(..., description="Current enterprise app screen.")
+    visible_panels: List[str] = Field(..., description="Currently visible panels on the active screen.")
     revealed_evidence: Dict[str, Dict[str, Any]] = Field(
         default_factory=dict,
-        description="Evidence bundles already unlocked for the current transaction.",
+        description="Evidence bundles revealed for the active case.",
     )
-    investigation_budget_remaining: int = Field(
-        default=0,
-        ge=0,
-        description="How many more investigation actions may be spent on the current case.",
-    )
-    case_stage: str = Field(
-        default="triage",
-        description="Current stage of review for the case, such as triage or awaiting_decision.",
+    linked_case_ids: List[str] = Field(default_factory=list, description="Related case identifiers.")
+    remaining_steps: int = Field(..., ge=0, description="Remaining total step budget for the episode.")
+    remaining_sla: int = Field(..., ge=0, description="Remaining SLA budget before penalties grow.")
+    note_required: bool = Field(..., description="Whether the current case still requires a note before resolution.")
+    allowed_actions: List[ActionTypeEnum] = Field(..., description="Actions currently considered valid.")
+    queue_items: List[QueueCaseCard] = Field(default_factory=list, description="Queue view across all episode cases.")
+    case_summary: CaseSummary = Field(..., description="Summary of the active case.")
+    episode_step: int = Field(..., ge=0, description="Current 1-based step count within the episode.")
+    app_context: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Extra app metadata such as workflow hints or policy flags already visible.",
     )
 
 
 class Reward(BaseModel):
-    """Reward signal returned after each agent action.
-    
-    The reward is dense (every step signals quality), business-cost-sensitive,
-    and includes calibration feedback (penalizing overconfidence).
-    
-    Attributes:
-        value: Dense reward [-1.0, 1.0] indicating action quality.
-            - +1.0: Correct detection of fraud with perfect confidence
-            - +0.8: Correct approval of legitimate with good confidence
-            - -0.5: False positive (rejected legitimate transaction)
-            - -1.0: False negative (approved fraudulent transaction)
-            Calibration penalty applied: rewards decrease if confidence mismatches accuracy.
-        reason: Human-readable summary explaining the reward calculation.
-        is_correct: Whether the prediction matched the ground truth label.
-        ground_truth: The hidden ground truth label (fraud or legitimate).
-            Revealed only after the agent acts (learning signal).
-        confidence_penalty: Calibration adjustment [-0.3, 0.3] based on confidence quality.
-            - Positive: Agent was overconfident in correct decision (small penalty)
-            - Negative: Agent was underconfident (penalty for not committing)
-            - 0.0: Confidence matched accuracy perfectly
-        business_impact: Relative business cost multiplier for this case [0.5, 2.0].
-            - Cases with high customer value: business_impact ~ 2.0 (error costs more)
-            - Cases with low risk: business_impact ~ 0.5 (error matters less)
-    
-    Example:
-        reward = Reward(
-            value=0.95,
-            reason="Correct fraud detection with high confidence (0.92) - excellent action.",
-            is_correct=True,
-            ground_truth=DecisionEnum.FRAUD,
-            confidence_penalty=-0.05,
-            business_impact=1.8
-        )
-    """
+    """Dense reward returned for every step."""
 
     model_config = ConfigDict(use_enum_values=False)
 
-    value: float = Field(..., ge=-1.0, le=1.0, description="Dense reward for the action.")
-    reason: str = Field(..., description="Human-readable summary of the reward calculation.")
-    is_correct: Optional[bool] = Field(
+    value: float = Field(..., ge=-1.0, le=1.0, description="Step reward in the closed interval [-1, 1].")
+    reason: str = Field(..., description="Human-readable explanation for the reward assignment.")
+    action_type: ActionTypeEnum = Field(..., description="Action family that produced the reward.")
+    case_id: str = Field(..., description="Case affected by the action.")
+    action_cost: float = Field(default=0.0, description="Explicit cost applied to the action.")
+    sla_penalty: float = Field(default=0.0, description="Penalty applied for burning SLA budget.")
+    evidence_key: Optional[str] = Field(default=None, description="Evidence key affected by the action, if any.")
+    resolution: Optional[ResolutionEnum] = Field(default=None, description="Resolution submitted, if any.")
+    ground_truth_resolution: Optional[ResolutionEnum] = Field(
         default=None,
-        description="Whether the prediction matched the hidden label. Null for investigation actions.",
+        description="Hidden correct resolution once a final decision has been made.",
     )
-    ground_truth: Optional[DecisionEnum] = Field(
+    is_correct: Optional[bool] = Field(default=None, description="Whether the final case routing was correct.")
+    policy_compliant: Optional[bool] = Field(
         default=None,
-        description="Hidden ground-truth label revealed after a final decision. Null during investigation.",
+        description="Whether the final routing also complied with revealed policy constraints.",
     )
-    confidence_penalty: float = Field(
-        ...,
-        ge=-0.3,
-        le=0.3,
-        description="Calibration adjustment based on confidence quality.",
-    )
-    business_impact: float = Field(
-        ...,
-        ge=0.5,
-        le=2.0,
-        description="Relative business cost multiplier for the current case.",
-    )
-    action_type: ActionTypeEnum = Field(
-        default=ActionTypeEnum.DECIDE,
-        description="Whether the reward came from a decision or an investigation action.",
-    )
-    investigation_target: Optional[InvestigationTargetEnum] = Field(
-        default=None,
-        description="Investigation bundle associated with the reward, if any.",
-    )
-    evidence_revealed: bool = Field(
+    anti_hacking_triggered: bool = Field(
         default=False,
-        description="Whether this step unlocked a new evidence bundle.",
-    )
-    action_cost: float = Field(
-        default=0.0,
-        ge=0.0,
-        le=1.0,
-        description="Explicit cost paid for the action, typically non-zero for investigation steps.",
+        description="Whether the reward reflects anti-hacking or anti-spam penalties.",
     )
 
 
 class EpisodeState(BaseModel):
-    """Serializable snapshot of the current episode.
-    
-    This model captures the complete episode state at any point in time.
-    Useful for debugging, replay, and monitoring agent progress.
-    
-    Attributes:
-        episode_id: Unique identifier for this episode (string).
-        task_name: Current task difficulty.
-        step_count: Number of actions submitted so far (0-based, incremented after each step).
-        transactions_evaluated: Number of transactions completed (same as step_count).
-        cumulative_reward: Sum of all reward.value fields from step 1 to now.
-        correct_predictions: Number of steps where is_correct=True.
-        is_done: Whether episode has reached terminal state (all transactions reviewed).
-        max_steps: Maximum allowed steps for this task (45, 50, or 65).
-    
-    Derived Metrics:
-        - accuracy: correct_predictions / step_count (if step_count > 0)
-        - avg_reward: cumulative_reward / step_count (if step_count > 0)
-        - progress: step_count / max_steps
-    
-    Example:
-        state = EpisodeState(
-            episode_id="ep_abc123",
-            task_name=TaskDifficulty.EASY,
-            step_count=5,
-            transactions_evaluated=5,
-            cumulative_reward=2.45,
-            correct_predictions=4,
-            is_done=False,
-            max_steps=45
-        )
-        accuracy = state.correct_predictions / state.step_count  # 0.8 (80%)
-    """
+    """Full state snapshot returned by ``state()``."""
 
     model_config = ConfigDict(use_enum_values=False)
 
-    episode_id: str = Field(..., description="Unique identifier for the episode.")
+    episode_id: str = Field(..., description="Current episode identifier.")
     task_name: TaskDifficulty = Field(..., description="Current task difficulty.")
-    step_count: int = Field(..., ge=0, description="Number of actions executed so far.")
-    transactions_evaluated: int = Field(..., ge=0, description="Transactions completed so far.")
+    current_screen: CaseScreenEnum = Field(..., description="Current app screen.")
+    active_case_id: str = Field(..., description="Currently focused case.")
+    step_count: int = Field(..., ge=0, description="Number of actions taken so far.")
+    remaining_steps: int = Field(..., ge=0, description="Remaining total step budget.")
+    remaining_sla: int = Field(..., ge=0, description="Remaining SLA budget.")
     cumulative_reward: float = Field(..., description="Total reward accumulated this episode.")
-    correct_predictions: int = Field(..., ge=0, description="Correct predictions made so far.")
-    is_done: bool = Field(..., description="Whether the episode has reached a terminal state.")
-    max_steps: int = Field(..., ge=1, description="Maximum number of allowed steps in the task.")
-    current_transaction_id: str = Field(..., description="Transaction currently under review.")
-    investigations_used: int = Field(..., ge=0, description="Investigation actions used so far in the episode.")
-    investigation_budget_remaining: int = Field(
-        default=0,
-        ge=0,
-        description="How many investigation actions remain for the active case.",
+    is_done: bool = Field(..., description="Whether the episode has terminated.")
+    resolved_case_ids: List[str] = Field(default_factory=list, description="Case IDs already resolved.")
+    unresolved_case_ids: List[str] = Field(default_factory=list, description="Case IDs still open.")
+    notes_written_by_case: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Number of notes written for each case.",
     )
-    revealed_evidence_keys: List[str] = Field(
+    evidence_keys_by_case: Dict[str, List[str]] = Field(
+        default_factory=dict,
+        description="Revealed evidence bundle keys per case.",
+    )
+    policy_checked_case_ids: List[str] = Field(
         default_factory=list,
-        description="Evidence bundles already unlocked for the active case.",
+        description="Case IDs where the policy tool has been consulted.",
     )
+    resolution_by_case: Dict[str, ResolutionEnum] = Field(
+        default_factory=dict,
+        description="Submitted resolutions for already resolved cases.",
+    )
+    invalid_action_count: int = Field(default=0, ge=0, description="Number of invalid-order actions taken.")
+    redundant_action_count: int = Field(default=0, ge=0, description="Number of redundant fetch/note actions taken.")
 
 
 class StepResult(BaseModel):
-    """Result returned by ``step()``.
-    
-    This model wraps all outputs from a single environment step, including
-    the next observation, reward signal, termination flag, and metadata.
-    
-    Attributes:
-        observation: Next observation (or final state if done=True).
-        reward: Reward for the action just submitted.
-        done: Whether episode is complete (all transactions reviewed or error).
-        info: Dict with optional supplementary data (debugging, logging).
-    
-    Example:
-        result = env.step(action)
-        obs = result.observation
-        reward = result.reward
-        if result.done:
-            print(f"Episode complete! Final score: {reward.value}")
-        else:
-            print(f"Step {obs.episode_step} / {max_steps}")
-    """
+    """Environment step result."""
 
-    observation: FraudCheckObservation = Field(..., description="Next observation.")
+    observation: FraudCheckObservation = Field(..., description="Next observation after the submitted action.")
     reward: Reward = Field(..., description="Reward assigned to the submitted action.")
-    done: bool = Field(..., description="Whether the episode is complete.")
-    info: Optional[Dict[str, Any]] = Field(default=None, description="Supplementary metadata.")
+    done: bool = Field(..., description="Whether the episode terminated after this step.")
+    info: Dict[str, Any] = Field(default_factory=dict, description="Extra runtime diagnostics.")
 
 
 class ResetResult(BaseModel):
-    """Result returned by ``reset()``.
-    
-    This model initializes a fresh episode with the requested task difficulty.
-    
-    Attributes:
-        observation: Initial observation (first transaction).
-        info: Episode metadata (task, episode_id, max_steps, etc.).
-    
-    Example:
-        result = env.reset(TaskDifficulty.EASY)
-        obs = result.observation
-        print(f"Episode {result.info['episode_id']} started. Task: {result.info['task']}")
-    """
+    """Environment reset result."""
 
-    observation: FraudCheckObservation = Field(..., description="Initial observation.")
-    info: Dict[str, Any] = Field(..., description="Episode metadata.")
+    observation: FraudCheckObservation = Field(..., description="Initial observation for the new episode.")
+    info: Dict[str, Any] = Field(default_factory=dict, description="Episode metadata.")

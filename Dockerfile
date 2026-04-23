@@ -1,5 +1,5 @@
-# FraudShield - OpenEnv Fraud Detection Environment
-# Production-grade Docker image for e-commerce fraud review
+# FraudShield - OpenEnv Enterprise FraudOps Environment
+# Production-grade Docker image for multi-app enterprise fraud investigation
 
 FROM python:3.11-slim
 
@@ -10,8 +10,8 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Add metadata labels
 LABEL maintainer="Devika J <devikaj2005@gmail.com>" \
-      description="FraudShield - OpenEnv environment for marketplace fraud detection" \
-      version="0.2.0" \
+      description="FraudShield - OpenEnv environment for enterprise fraud operations" \
+      version="0.4.0" \
       org.opencontainers.image.source="https://github.com/DevikaJ2005/fraudshield"
 
 WORKDIR /app

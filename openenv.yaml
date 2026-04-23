@@ -1,10 +1,9 @@
 name: fraudshield
-version: 0.3.0
+version: 0.4.0
 description: |
-  Agentic marketplace fraud investigation environment for OpenEnv.
-  Agents can either make a final fraud decision or spend limited investigation
-  budget to reveal extra evidence before deciding, with deterministic grading and
-  business-cost-sensitive rewards.
+  Enterprise FraudOps environment for OpenEnv. Agents investigate queue cases
+  across transaction review, customer profile, merchant profile, network graph,
+  and policy tools before resolving or escalating them under SLA pressure.
 author: Devika J
 email: devikaj2005@gmail.com
 
@@ -27,35 +26,33 @@ reward:
 tasks:
   - name: easy
     description: |
-      Low-noise triage cases with strong single-transaction indicators.
-      Best agents decide quickly and only investigate when a high-value signal conflicts.
-      Difficulty: Foundation level - rewards crisp pattern recognition.
+      One low-noise case. The agent should open the case, document it, and route it
+      correctly without wasting time.
     difficulty: easy
-    num_transactions: 24
-    baseline_score: 0.9999
+    num_cases: 1
+    baseline_score: 0.9900
   - name: medium
     description: |
-      Mixed-signal reviews where confidence calibration and selective investigation matter.
-      No single feature is decisive; agents must weigh multiple indicators and limited evidence budget.
-      Difficulty: Intermediate - rewards balanced decision-making.
+      One ambiguous case where customer history and policy review are needed before
+      the correct routing appears.
     difficulty: medium
-    num_transactions: 36
-    baseline_score: 0.9996
+    num_cases: 1
+    baseline_score: 0.3500
   - name: hard
     description: |
-      Coordinated fraud rings and legitimate flash-sale edge cases with overlapping signals.
-      Complex patterns benefit from network-level analysis and tolerance for ambiguity.
-      Difficulty: Advanced - rewards sophisticated multi-step reasoning.
+      Two linked fraud cases that require network reasoning, policy-aware escalation,
+      and consistent case notes.
     difficulty: hard
-    num_transactions: 48
-    baseline_score: 0.9983
+    num_cases: 2
+    baseline_score: 0.7063
 
 metadata:
-  created: "2026-03-30"
+  created: "2026-04-23"
   framework: openenv
   license: MIT
   tags:
     - openenv
-    - fraud-detection
-    - e-commerce
-    - agent-evaluation
+    - enterprise-workflow
+    - fraudops
+    - trust-and-safety
+    - multi-app

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fraudshield"
-version = "0.2.0"
-description = "Production-grade OpenEnv environment for e-commerce fraud detection. Simulates marketplace fraud review with deterministic graders, dense rewards, and reproducible baselines."
+version = "0.4.0"
+description = "Enterprise FraudOps OpenEnv environment for multi-app case investigation, policy-aware routing, and reproducible workflow evaluation."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -15,9 +15,10 @@ authors = [
 keywords = [
     "openenv",
     "reinforcement-learning",
-    "fraud-detection",
+    "fraudops",
+    "enterprise-workflow",
     "agent-evaluation",
-    "e-commerce",
+    "trust-and-safety",
     "environment",
 ]
 classifiers = [

@@ -1,102 +1,109 @@
 ---
 title: FraudShield
-emoji: 🛡️
+emoji: "🛡️"
 colorFrom: blue
 colorTo: indigo
 sdk: docker
-python_version: "3.11"
+python_version: "3.12"
 pinned: false
 license: mit
 ---
 
 # FraudShield
 
-FraudShield is an OpenEnv environment for marketplace trust and safety. Agents review e-commerce transactions, decide whether to approve or block them, and can optionally spend a limited investigation budget to reveal extra evidence before making a final call.
+FraudShield is an OpenEnv environment for **enterprise fraud operations**. Instead of a one-shot fraud classifier, the agent behaves like a trust-and-safety analyst working across multiple internal tools: it opens a queue case, reviews the transaction, fetches customer and merchant evidence, checks policy rules, writes case notes, and resolves or escalates the case under SLA pressure.
 
-This keeps the project grounded in a real fraud-review workflow while still being deterministic, fast to validate, and easy to deploy on Hugging Face Spaces.
+This is designed for Theme `#3.1 Professional Tasks`: a partially observable, multi-step enterprise workflow where world state matters and shortcutting is punished.
 
-## Why it stands out
+## Why this fits the hackathon
 
-- Real-world task: marketplace fraud review instead of a toy gridworld
-- Agentic action space: agents can `decide` or `investigate`
-- Partial observability: not all evidence is visible at reset
-- Dense reward shaping: business cost, correctness, calibration, and investigation cost all matter
-- Reproducible evaluation: frozen snapshot, fixed seed, deterministic graders
-- Production runtime: FastAPI server, Docker image, OpenEnv-compatible HTTP surface, and MCP bridge
+- Real professional workflow instead of a toy benchmark
+- Explicit tool actions rather than hidden investigation internals
+- Partial observability with staged evidence gathering
+- Deterministic offline runtime from a frozen public-data snapshot
+- Reward shaping that values routing quality, policy compliance, notes, and efficiency
+- Stronger training story because the baseline leaves room for improvement
+
+## Simulated enterprise apps
+
+FraudShield exposes one workflow across five internal apps:
+
+1. `Queue`
+2. `Case Console`
+3. `Customer Profile`
+4. `Merchant Profile`
+5. `Policy & Escalation`
 
 ## Tasks
 
-| Task | Cases | Investigation budget per case | Max actions | Baseline score |
-| --- | ---: | ---: | ---: | ---: |
-| Easy | 24 | 1 | 48 | 0.9999 |
-| Medium | 36 | 2 | 108 | 0.9996 |
-| Hard | 48 | 3 | 192 | 0.9983 |
+| Task | Episode shape | What the agent must do |
+| --- | --- | --- |
+| Easy | 1 low-noise case | Review, document, and route a clear-cut case |
+| Medium | 1 ambiguous case | Use profile evidence plus policy rules before routing |
+| Hard | 2 linked fraud cases | Connect shared evidence, note both cases, and choose the correct routing for each |
 
-The current deterministic baseline averages to `0.9993`.
+## Action space
 
-## Environment design
+Agents emit a typed `FraudCheckAction` with one of these explicit workflow actions:
 
-### Action space
+- `review_transaction`
+- `fetch_customer_profile`
+- `fetch_merchant_profile`
+- `fetch_network_graph`
+- `check_policy`
+- `add_case_note`
+- `resolve_case`
 
-Agents emit a typed `FraudCheckAction`.
+Final routing is limited to:
 
-Decision action:
+- `approve`
+- `block`
+- `hold`
+- `request_docs`
+- `escalate`
+
+Example resolution action:
 
 ```python
 FraudCheckAction(
-    transaction_id="txn_123",
-    decision="fraud",
-    confidence=0.83,
-    reasoning="High seller chargeback rate and repeated device sharing indicate abuse."
+    case_id="medium_case_01",
+    action_type="resolve_case",
+    resolution="request_docs",
+    reasoning="Customer and policy evidence show mixed signals that require document verification."
 )
 ```
 
-Investigation action:
-
-```python
-FraudCheckAction(
-    transaction_id="txn_123",
-    action_type="investigate",
-    investigation_target="network_graph",
-    reasoning="Signals are borderline, so I want graph evidence before deciding."
-)
-```
-
-Supported investigation targets:
-
-- `device_intel`
-- `payment_trace`
-- `network_graph`
-- `fulfillment_review`
-- `trust_notes`
-
-### Observation space
+## Observation space
 
 Each `FraudCheckObservation` includes:
 
-- structured transaction data
-- sanitized historical marketplace context
-- a visible signal summary
-- remaining investigation budget for the current case
-- evidence bundles already revealed
-- investigations still available
-- the current case stage such as `triage`, `investigating`, or `awaiting_decision`
+- `case_id`
+- `task_name`
+- `current_screen`
+- `visible_panels`
+- `revealed_evidence`
+- `linked_case_ids`
+- `remaining_steps`
+- `remaining_sla`
+- `note_required`
+- `allowed_actions`
+- `queue_items`
+- `case_summary`
+- `app_context`
 
-### Reward design
+## Reward design
 
-The reward function mixes:
+FraudShield uses layered verifier-first rewards:
 
-- classification correctness
-- fraud-vs-legitimate business cost asymmetry
-- confidence calibration
-- penalties for wrong transaction IDs
-- small cost-sensitive rewards for useful investigation actions
+- positive reward for first-time useful evidence retrieval
+- positive reward for checking policy when it matters
+- positive reward for adding a case note before closure
+- large terminal reward for correct routing
+- penalties for redundant fetches, bad action order, note spam, SLA burn, and policy misses
 
-Investigation rewards never reveal the ground truth. That only appears after a final decision.
+The final reward depends on **correct routing plus workflow quality**, not only on the hidden fraud label.
 
 ## Runtime API
-
-FraudShield supports both standard REST endpoints and a minimal MCP bridge.
 
 REST endpoints:
 
@@ -110,12 +117,6 @@ REST endpoints:
 - `GET /schema`
 - `POST /mcp`
 
-The running HTTP server passes:
-
-```bash
-python -m openenv.cli validate --url http://127.0.0.1:7860
-```
-
 ## Quick start
 
 ### Install
@@ -124,21 +125,17 @@ python -m openenv.cli validate --url http://127.0.0.1:7860
 pip install -e .
 ```
 
-### Run the competition baseline
+### Run the baseline
 
 ```bash
 python inference.py
 ```
 
-This writes `fraudshield_baseline_results.json` and prints validator-friendly `[START]`, `[STEP]`, and `[END]` blocks to stdout.
-
-### Run the agentic demo
+### Run the workflow demo
 
 ```bash
-python agentic_demo.py --task hard --max-decisions 3
+python agentic_demo.py --task hard --max-actions 10
 ```
-
-This uses the budget-aware `AgenticHeuristicFraudDetectionAgent` to show a short multi-step review with investigations and final decisions.
 
 ### Run the API locally
 
@@ -153,51 +150,49 @@ Then open:
 - `http://127.0.0.1:7860/schema`
 - `http://127.0.0.1:7860/docs`
 
-## Inference modes
+## Baseline modes
 
-`inference.py` is submission-safe and keeps the validator path stable.
+`inference.py` supports two paths:
 
-- Offline mode: uses the snapshot-calibrated deterministic baseline
-- Proxy mode: uses the injected `API_BASE_URL` and `API_KEY` through a hybrid wrapper
-- Resilient fallback: if the proxy client fails, the run keeps using the deterministic local policy instead of crashing
+- Offline deterministic workflow heuristic
+- Optional remote LLM path through OpenAI-compatible env vars
 
-Recommended environment variables for the online path:
+Latest verified offline baseline:
+
+- Easy: `0.9900`
+- Medium: `0.3500`
+- Hard: `0.7063`
+- Final: `0.6821`
+
+Supported env vars:
 
 ```bash
 API_BASE_URL=https://router.huggingface.co/v1
-API_KEY=<injected-by-validator-or-your-own-local-key>
-MODEL_NAME=<optional-if-your-proxy-can-list-models>
+MODEL_NAME=<model>
+HF_TOKEN=<token>
 ```
 
 Aliases are also accepted:
 
 - `APIBASEURL`
-- `APIKEY`
 - `MODELNAME`
-- `HF_TOKEN`
 - `HFTOKEN`
+- `API_KEY`
 - `OPENAI_API_KEY`
 
 ## Data
 
-Runtime evaluation uses the committed snapshot only:
+Runtime evaluation is fully offline and deterministic.
 
 - snapshot file: `data/fraudshield_cases.json`
-- snapshot id: `fraudshield-realworld-v2`
-- schema version: `2.0`
 - seed: `42`
+- source: public Kaggle / ULB credit-card fraud data enriched into enterprise fraud-ops cases
 
-The snapshot is built from the public Kaggle / ULB credit card fraud dataset and enriched into marketplace-style fraud cases. The environment does not fetch live data during `reset()` or `step()`.
-
-To rebuild locally:
-
-```bash
-python download_kaggle_data.py
-```
+The environment does **not** fetch live records during `reset()` or `step()`.
 
 ## Validation
 
-Local checks that currently pass:
+Recommended local checks:
 
 ```bash
 python inference.py
@@ -205,7 +200,25 @@ python -X utf8 validate_enhancements.py
 python -X utf8 validate_api.py
 python -m openenv.cli validate .
 python -m openenv.cli validate --url http://127.0.0.1:7860
+docker build -t fraudshield .
+docker run -p 7860:7860 fraudshield
 ```
+
+## Training artifact
+
+The repo includes a minimal TRL Colab notebook for the required hackathon training artifact:
+
+- `notebooks/fraudshield_trl_colab.ipynb`
+
+Default training model:
+
+- `Qwen/Qwen2.5-0.5B-Instruct`
+
+## Public artifact
+
+The repo also includes a Hugging Face blog draft outline:
+
+- `HF_BLOG_DRAFT.md`
 
 ## Project layout
 
@@ -214,37 +227,18 @@ fraudshield/
 |-- agentic_demo.py
 |-- data/
 |   `-- fraudshield_cases.json
+|-- notebooks/
+|   `-- fraudshield_trl_colab.ipynb
 |-- server/
 |   `-- app.py
 |-- data_loader.py
-|-- download_kaggle_data.py
 |-- Dockerfile
 |-- fraudshield_env.py
 |-- graders.py
 |-- inference.py
-|-- inference_llm.py
 |-- llm_agent.py
 |-- models.py
 |-- openenv.yaml
+|-- HF_BLOG_DRAFT.md
 `-- pyproject.toml
 ```
-
-## Deployment
-
-Build locally:
-
-```bash
-docker build . -t fraudshield
-docker run -p 7860:7860 fraudshield
-```
-
-Hugging Face Space:
-
-- Space URL: `https://huggingface.co/spaces/DevikaJ2005/fraudshield-1`
-- GitHub URL: `https://github.com/DevikaJ2005/Fraudshield`
-
-## Notes
-
-- `inference.py` now supports both decision and investigation actions in the baseline loop
-- the richer investigation workflow is available in the environment, server, and baseline policy
-- when proxy credentials are present, the competition agent still touches the provided proxy while preserving the stronger deterministic policy
