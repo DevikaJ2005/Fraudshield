@@ -17,7 +17,7 @@ class TaskDifficulty(str, Enum):
 
 
 class ActionTypeEnum(str, Enum):
-    """Explicit enterprise tool actions available to the agent."""
+    """Explicit investigation actions available to the agent."""
 
     REVIEW_TRANSACTION = "review_transaction"
     FETCH_CUSTOMER_PROFILE = "fetch_customer_profile"
@@ -39,7 +39,7 @@ class ResolutionEnum(str, Enum):
 
 
 class CaseScreenEnum(str, Enum):
-    """Simulated enterprise apps in the FraudOps workflow."""
+    """Workflow views surfaced by the environment."""
 
     QUEUE = "Queue"
     CASE_CONSOLE = "Case Console"
@@ -73,7 +73,7 @@ class CaseSummary(BaseModel):
 
 
 class FraudCheckAction(BaseModel):
-    """Action submitted by an agent to the FraudOps environment."""
+    """Action submitted by an agent to the fraud-investigation environment."""
 
     model_config = ConfigDict(use_enum_values=False)
 
@@ -127,7 +127,7 @@ class FraudCheckObservation(BaseModel):
 
     case_id: str = Field(..., description="Currently active case identifier.")
     task_name: TaskDifficulty = Field(..., description="Current task difficulty.")
-    current_screen: CaseScreenEnum = Field(..., description="Current enterprise app screen.")
+    current_screen: CaseScreenEnum = Field(..., description="Current workflow view.")
     visible_panels: List[str] = Field(..., description="Currently visible panels on the active screen.")
     revealed_evidence: Dict[str, Dict[str, Any]] = Field(
         default_factory=dict,
@@ -138,7 +138,7 @@ class FraudCheckObservation(BaseModel):
     remaining_sla: int = Field(..., ge=0, description="Remaining SLA budget before penalties grow.")
     note_required: bool = Field(..., description="Whether the current case still requires a note before resolution.")
     allowed_actions: List[ActionTypeEnum] = Field(..., description="Actions currently considered valid.")
-    queue_items: List[QueueCaseCard] = Field(default_factory=list, description="Queue view across all episode cases.")
+    queue_items: List[QueueCaseCard] = Field(default_factory=list, description="Optional queue context for open cases.")
     case_summary: CaseSummary = Field(..., description="Summary of the active case.")
     episode_step: int = Field(..., ge=0, description="Current 1-based step count within the episode.")
     app_context: Dict[str, Any] = Field(

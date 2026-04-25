@@ -1,20 +1,18 @@
-"""Baseline agents for the FraudShield FraudOps workflow."""
+"""Agent selection and heuristic baseline for FraudShield."""
 
 from __future__ import annotations
 
-import json
 import logging
 import os
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from models import ActionTypeEnum, FraudCheckAction, ResolutionEnum
 
-try:  # pragma: no cover - optional in local smoke tests
-    from openai import OpenAI
-except ImportError:  # pragma: no cover
-    OpenAI = None
-
 logger = logging.getLogger(__name__)
+
+HIGH_VALUE_CATEGORIES = {"luxury", "electronics", "travel", "high_value_collectibles", "collectibles"}
+RISKY_PAYMENT_METHODS = {"prepaid_card", "gift_card", "crypto_gateway"}
 
 
 def get_env(*names: str, default: Optional[str] = None) -> Optional[str]:
@@ -29,215 +27,212 @@ def get_env(*names: str, default: Optional[str] = None) -> Optional[str]:
     return default
 
 
-class WorkflowHeuristicFraudOpsAgent:
-    """Deterministic workflow baseline that follows a limited enterprise playbook."""
+class SnapshotCalibratedFraudDetectionAgent:
+    """Deterministic baseline tuned for the hidden-evidence workflow."""
 
-    name = "workflow-heuristic-baseline"
+    name = "snapshot-calibrated-heuristic"
+    agent_type = "heuristic"
 
     def decide(self, observation) -> FraudCheckAction:
         case_id = observation.case_id
         revealed = observation.revealed_evidence
         task_name = observation.task_name.value
-        case_summary = observation.case_summary
+        budget = int(observation.app_context.get("investigation_budget_remaining", 0))
+        item_category = str(observation.app_context.get("item_category", ""))
+        amount = float(observation.case_summary.amount_usd)
 
         if "transaction_review" not in revealed:
             return FraudCheckAction(
                 case_id=case_id,
                 action_type=ActionTypeEnum.REVIEW_TRANSACTION,
-                reasoning="Open the case console before taking any further action.",
+                reasoning="Open the transaction trace before any deeper investigation.",
             )
 
         if task_name == "easy":
-            if "merchant_profile" not in revealed and case_summary.visible_risk_band == "high":
+            if budget > 0 and "merchant_profile" not in revealed and (
+                amount >= 200.0 or item_category in HIGH_VALUE_CATEGORIES
+            ):
                 return FraudCheckAction(
                     case_id=case_id,
                     action_type=ActionTypeEnum.FETCH_MERCHANT_PROFILE,
-                    reasoning="A quick merchant check helps confirm the obvious queue signals.",
+                    reasoning="A single merchant review is enough to confirm this easy case.",
                 )
-            if case_summary.note_added is False:
-                return FraudCheckAction(
-                    case_id=case_id,
-                    action_type=ActionTypeEnum.ADD_CASE_NOTE,
-                    note_text="Reviewed the queue alert and merchant context before routing this obvious case.",
+            if observation.note_required:
+                return self._note_action(
+                    case_id,
+                    "Reviewed the transaction trace and captured the visible merchant risk before routing.",
                 )
             return FraudCheckAction(
                 case_id=case_id,
                 action_type=ActionTypeEnum.RESOLVE_CASE,
                 resolution=self._resolve_easy(revealed),
-                reasoning="The visible transaction and merchant signals are strong enough for final routing.",
+                reasoning="The visible transaction pattern is sufficient for an easy-case route.",
             )
 
         if task_name == "medium":
-            if "customer_profile" not in revealed:
+            if budget > 0 and "customer_profile" not in revealed:
                 return FraudCheckAction(
                     case_id=case_id,
                     action_type=ActionTypeEnum.FETCH_CUSTOMER_PROFILE,
-                    reasoning="Customer history is needed before making a policy-aware decision.",
+                    reasoning="Customer context is needed before deciding this mixed-signal case.",
                 )
-            if "policy_guide" not in revealed:
+            if budget > 0 and "policy_guide" not in revealed:
                 return FraudCheckAction(
                     case_id=case_id,
                     action_type=ActionTypeEnum.CHECK_POLICY,
-                    reasoning="Medium cases should be mapped against the policy guidance before routing.",
+                    reasoning="Policy guidance helps separate a hold from a document request.",
                 )
-            if case_summary.note_added is False:
+            if budget > 0 and "merchant_profile" not in revealed and self._transaction_looks_risky(revealed):
                 return FraudCheckAction(
                     case_id=case_id,
-                    action_type=ActionTypeEnum.ADD_CASE_NOTE,
-                    note_text="Reviewed customer history and policy triggers before selecting a medium-risk route.",
+                    action_type=ActionTypeEnum.FETCH_MERCHANT_PROFILE,
+                    reasoning="Merchant context can resolve the remaining ambiguity in this medium case.",
+                )
+            if observation.note_required:
+                return self._note_action(
+                    case_id,
+                    "Reviewed the available customer, transaction, and policy evidence before routing the case.",
                 )
             return FraudCheckAction(
                 case_id=case_id,
                 action_type=ActionTypeEnum.RESOLVE_CASE,
                 resolution=self._resolve_medium(revealed),
-                reasoning="The gathered profile and policy evidence are enough for a conservative medium-case route.",
+                reasoning="The combined medium-case evidence supports a conservative final route.",
             )
 
-        if "network_graph" not in revealed and case_id.endswith("primary"):
+        if budget > 0 and "network_graph" not in revealed:
             return FraudCheckAction(
                 case_id=case_id,
                 action_type=ActionTypeEnum.FETCH_NETWORK_GRAPH,
-                reasoning="Primary hard cases need network evidence to understand linked abuse.",
+                reasoning="Hard cases usually need graph evidence before the routing becomes reliable.",
             )
-        if "merchant_profile" not in revealed and case_id.endswith("secondary"):
+        if case_id.endswith("primary") and budget > 0 and "merchant_profile" not in revealed:
             return FraudCheckAction(
                 case_id=case_id,
                 action_type=ActionTypeEnum.FETCH_MERCHANT_PROFILE,
-                reasoning="Secondary hard cases get a merchant check before final routing.",
+                reasoning="Merchant risk helps determine whether the primary hard case should escalate.",
             )
-        if "policy_guide" not in revealed and case_id.endswith("primary"):
+        if case_id.endswith("secondary") and budget > 0 and "customer_profile" not in revealed:
+            return FraudCheckAction(
+                case_id=case_id,
+                action_type=ActionTypeEnum.FETCH_CUSTOMER_PROFILE,
+                reasoning="Customer context helps determine whether the secondary hard case should block or hold.",
+            )
+        if budget > 0 and "policy_guide" not in revealed:
             return FraudCheckAction(
                 case_id=case_id,
                 action_type=ActionTypeEnum.CHECK_POLICY,
-                reasoning="Escalation thresholds should be reviewed before closing the primary hard case.",
+                reasoning="Policy is needed before choosing the final route on a hard case.",
             )
-        if case_summary.note_added is False:
-            return FraudCheckAction(
-                case_id=case_id,
-                action_type=ActionTypeEnum.ADD_CASE_NOTE,
-                note_text="Collected the available hard-case evidence and documented the current routing rationale.",
+        if observation.note_required:
+            return self._note_action(
+                case_id,
+                "Captured the reviewed transaction, graph, and supporting evidence before closing the hard case.",
             )
         return FraudCheckAction(
             case_id=case_id,
             action_type=ActionTypeEnum.RESOLVE_CASE,
             resolution=self._resolve_hard(case_id, revealed),
-            reasoning="The visible hard-case evidence is enough for a best-effort route, even if some linked detail remains hidden.",
+            reasoning="The available hard-case evidence supports the strongest route currently justified.",
+        )
+
+    def _note_action(self, case_id: str, note_text: str) -> FraudCheckAction:
+        return FraudCheckAction(
+            case_id=case_id,
+            action_type=ActionTypeEnum.ADD_CASE_NOTE,
+            note_text=note_text,
+        )
+
+    def _transaction_looks_risky(self, revealed: Dict[str, Dict[str, Any]]) -> bool:
+        facts = revealed.get("transaction_review", {}).get("facts", {})
+        if not facts:
+            return False
+        return bool(
+            facts.get("payment_method") in RISKY_PAYMENT_METHODS
+            or facts.get("same_address_orders_24h", 0) >= 4
+            or facts.get("device_country") != facts.get("shipping_country")
+            or facts.get("shipping_speed") in {"overnight", "same-day"}
         )
 
     def _resolve_easy(self, revealed: Dict[str, Dict[str, Any]]) -> ResolutionEnum:
         facts = revealed["transaction_review"]["facts"]
-        geo_mismatch = facts["shipping_country"] != facts["device_country"]
-        if facts["previous_fraud_flags"] >= 1 or facts["shared_device_accounts_24h"] >= 6 or geo_mismatch:
+        merchant = revealed.get("merchant_profile", {}).get("facts", {})
+        if (
+            facts.get("payment_method") in RISKY_PAYMENT_METHODS
+            or facts.get("same_address_orders_24h", 0) >= 4
+            or facts.get("device_country") != facts.get("shipping_country")
+            or merchant.get("seller_chargeback_rate_30d", 0.0) >= 0.10
+            or merchant.get("seller_account_age_days", 9999) <= 45
+        ):
             return ResolutionEnum.BLOCK
         return ResolutionEnum.APPROVE
 
     def _resolve_medium(self, revealed: Dict[str, Dict[str, Any]]) -> ResolutionEnum:
-        transaction_facts = revealed["transaction_review"]["facts"]
-        customer_facts = revealed.get("customer_profile", {}).get("facts", {})
-        if transaction_facts["previous_fraud_flags"] >= 1:
+        facts = revealed["transaction_review"]["facts"]
+        customer = revealed.get("customer_profile", {}).get("facts", {})
+        merchant = revealed.get("merchant_profile", {}).get("facts", {})
+        if not merchant and customer.get("buyer_disputes_90d", 0) >= 2:
             return ResolutionEnum.HOLD
-        if customer_facts.get("buyer_disputes_90d", 0) >= 3:
+        conflict_score = 0
+        if customer.get("buyer_disputes_90d", 0) >= 2:
+            conflict_score += 1
+        if not customer.get("is_repeat_buyer", True):
+            conflict_score += 1
+        if merchant.get("seller_chargeback_rate_30d", 0.0) >= 0.06:
+            conflict_score += 1
+        if facts.get("payment_method") in RISKY_PAYMENT_METHODS:
+            conflict_score += 1
+        if conflict_score >= 3:
             return ResolutionEnum.HOLD
-        if transaction_facts["previous_fraud_flags"] >= 1 or customer_facts.get("linked_cards_7d", 0) >= 5:
+        if conflict_score >= 1:
             return ResolutionEnum.REQUEST_DOCS
         return ResolutionEnum.APPROVE
 
     def _resolve_hard(self, case_id: str, revealed: Dict[str, Dict[str, Any]]) -> ResolutionEnum:
-        transaction_facts = revealed["transaction_review"]["facts"]
+        network = revealed.get("network_graph", {}).get("facts", {})
+        merchant = revealed.get("merchant_profile", {}).get("facts", {})
+        customer = revealed.get("customer_profile", {}).get("facts", {})
+
         if case_id.endswith("primary"):
-            cluster = revealed.get("network_graph", {}).get("facts", {}).get("cluster_alert_score", 0.0)
-            return ResolutionEnum.ESCALATE if cluster >= 0.72 else ResolutionEnum.BLOCK
-        if "network_graph" not in revealed:
+            if network.get("cluster_alert_score", 0.0) >= 0.75 and network.get("linked_case_ids"):
+                return ResolutionEnum.ESCALATE
+            if merchant.get("seller_chargeback_rate_30d", 0.0) >= 0.10:
+                return ResolutionEnum.BLOCK
             return ResolutionEnum.HOLD
-        if transaction_facts["shared_device_accounts_24h"] >= 11:
+
+        if network.get("shared_device_accounts_24h", 0) >= 6 or network.get("previous_fraud_flags", 0) >= 1:
             return ResolutionEnum.BLOCK
+        if customer.get("buyer_disputes_90d", 0) >= 2:
+            return ResolutionEnum.HOLD
         return ResolutionEnum.HOLD
 
 
-class RemoteLLMFraudOpsAgent:
-    """OpenAI-compatible optional agent for the competition path."""
-
-    name = "remote-llm-fraudops-agent"
-
-    def __init__(self, model_name: str, api_key: str, api_base_url: Optional[str] = None, timeout: float = 30.0):
-        if OpenAI is None:
-            raise ImportError("openai package is not installed.")
-        self.model_name = model_name
-        self.api_base_url = api_base_url or "https://router.huggingface.co/v1"
-        self.client = OpenAI(base_url=self.api_base_url, api_key=api_key, timeout=timeout)
-
-    def decide(self, observation) -> FraudCheckAction:
-        try:
-            completion = self.client.chat.completions.create(
-                model=self.model_name,
-                temperature=0.0,
-                max_tokens=220,
-                messages=self._build_messages(observation),
-            )
-            content = completion.choices[0].message.content or ""
-            payload = self._parse_json(content)
-            return FraudCheckAction.model_validate(payload)
-        except Exception as exc:  # pragma: no cover - external API
-            raise RuntimeError(
-                "Remote FraudOps action generation failed. Check MODEL_NAME, API base URL, and credentials."
-            ) from exc
-
-    def _build_messages(self, observation) -> list[Dict[str, str]]:
-        user_payload = {
-            "case_id": observation.case_id,
-            "task_name": observation.task_name.value,
-            "current_screen": observation.current_screen.value,
-            "visible_panels": observation.visible_panels,
-            "revealed_evidence": observation.revealed_evidence,
-            "linked_case_ids": observation.linked_case_ids,
-            "remaining_steps": observation.remaining_steps,
-            "remaining_sla": observation.remaining_sla,
-            "note_required": observation.note_required,
-            "allowed_actions": [action.value for action in observation.allowed_actions],
-            "queue_items": [item.model_dump(mode="json") for item in observation.queue_items],
-            "case_summary": observation.case_summary.model_dump(mode="json"),
-            "app_context": observation.app_context,
-        }
-        return [
-            {
-                "role": "system",
-                "content": (
-                    "You are an enterprise fraud operations analyst. Respond with JSON only. "
-                    "Fields: case_id, action_type, note_text, resolution, reasoning. "
-                    "Only use these action_type values: review_transaction, fetch_customer_profile, "
-                    "fetch_merchant_profile, fetch_network_graph, check_policy, add_case_note, resolve_case. "
-                    "When action_type is add_case_note, include note_text. "
-                    "When action_type is resolve_case, include resolution and reasoning."
-                ),
-            },
-            {"role": "user", "content": json.dumps(user_payload, separators=(",", ":"))},
-        ]
-
-    @staticmethod
-    def _parse_json(text: str) -> Dict[str, Any]:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1:
-            raise ValueError("Model did not return JSON.")
-        return json.loads(text[start : end + 1])
-
-
 def build_default_agent() -> object:
-    """Build the configured remote agent, else return the deterministic workflow baseline."""
+    """Build the best available agent for the current runtime."""
 
-    model_name = get_env("MODEL_NAME", "MODELNAME")
-    api_key = get_env("HF_TOKEN", "HFTOKEN", "OPENAI_API_KEY", "OPENAIAPIKEY", "API_KEY", "APIKEY")
-    api_base_url = get_env("API_BASE_URL", "APIBASEURL", default="https://router.huggingface.co/v1")
+    heuristic = SnapshotCalibratedFraudDetectionAgent()
+    local_model_path = get_env("LOCAL_MODEL_PATH")
+    model_name = get_env("MODEL_NAME", default="gpt-4o-mini")
+    api_key = get_env("API_KEY", "OPENAI_API_KEY")
+    api_base_url = get_env("API_BASE_URL")
 
-    if model_name or api_key:
-        if not model_name or not api_key:
-            raise RuntimeError(
-                "Both MODEL_NAME/MODELNAME and HF_TOKEN/HFTOKEN (or OPENAI_API_KEY/API_KEY) "
-                "must be set for the remote LLM path."
-            )
-        return RemoteLLMFraudOpsAgent(model_name=model_name, api_key=api_key, api_base_url=api_base_url)
+    if local_model_path:
+        from llm_agent_openai import LocalModelFraudDetectionAgent
 
-    logger.warning(
-        "MODEL_NAME/MODELNAME and HF_TOKEN/HFTOKEN were not set. Falling back to the deterministic workflow baseline."
-    )
-    return WorkflowHeuristicFraudOpsAgent()
+        return LocalModelFraudDetectionAgent(
+            model_path=local_model_path,
+            fallback_agent=heuristic,
+        )
+
+    if api_key:
+        from llm_agent_openai import LLMFraudDetectionAgent
+
+        return LLMFraudDetectionAgent(
+            model_name=model_name or "gpt-4o-mini",
+            api_key=api_key,
+            api_base_url=api_base_url,
+            fallback_agent=heuristic,
+        )
+
+    logger.warning("No LOCAL_MODEL_PATH or API_KEY found. Falling back to the calibrated heuristic baseline.")
+    return heuristic

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Showcase the multi-app FraudOps workflow in FraudShield."""
+"""Run a simple CLI walkthrough of the FraudShield environment."""
 
 from __future__ import annotations
 
@@ -7,17 +7,17 @@ import argparse
 import json
 
 from fraudshield_env import FraudShieldEnvironment
-from llm_agent import WorkflowHeuristicFraudOpsAgent
+from llm_agent import SnapshotCalibratedFraudDetectionAgent
 
 
 def run_demo(task: str, max_actions: int) -> None:
     env = FraudShieldEnvironment(data_path="data", seed=42)
     env.load_data()
-    agent = WorkflowHeuristicFraudOpsAgent()
+    agent = SnapshotCalibratedFraudDetectionAgent()
 
     observation = env.reset(task).observation
     print("=" * 72)
-    print(f"FraudShield FraudOps Demo | task={task}")
+    print(f"FraudShield Demo | task={task}")
     print("=" * 72)
 
     while not env.is_done and env.step_count < max_actions:
@@ -49,7 +49,7 @@ def run_demo(task: str, max_actions: int) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run a short FraudShield FraudOps demo.")
+    parser = argparse.ArgumentParser(description="Run a short FraudShield walkthrough.")
     parser.add_argument("--task", choices=["easy", "medium", "hard"], default="medium")
     parser.add_argument("--max-actions", type=int, default=8)
     args = parser.parse_args()

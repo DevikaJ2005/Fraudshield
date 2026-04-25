@@ -1,9 +1,9 @@
 name: fraudshield
-version: 0.4.0
+version: 0.6.0
 description: |
-  Enterprise FraudOps environment for OpenEnv. Agents investigate queue cases
-  across transaction review, customer profile, merchant profile, network graph,
-  and policy tools before resolving or escalating them under SLA pressure.
+  Simulated fraud-investigation environment for OpenEnv. Agents work under
+  partial observability, reveal hidden evidence with investigation actions,
+  and route cases under limited budgets.
 author: Devika J
 email: devikaj2005@gmail.com
 
@@ -26,25 +26,22 @@ reward:
 tasks:
   - name: easy
     description: |
-      One low-noise case. The agent should open the case, document it, and route it
-      correctly without wasting time.
+      One low-noise case with strong visible cues and a single fetch budget.
     difficulty: easy
     num_cases: 1
     baseline_score: 0.9900
   - name: medium
     description: |
-      One ambiguous case where customer history and policy review are needed before
-      the correct routing appears.
+      One mixed-signal case that requires at least one investigation before routing.
     difficulty: medium
     num_cases: 1
     baseline_score: 0.3500
   - name: hard
     description: |
-      Two linked fraud cases that require network reasoning, policy-aware escalation,
-      and consistent case notes.
+      Two misleading linked cases where graph evidence is usually required.
     difficulty: hard
     num_cases: 2
-    baseline_score: 0.7063
+    baseline_score: 0.7425
 
 metadata:
   created: "2026-04-23"
@@ -52,7 +49,6 @@ metadata:
   license: MIT
   tags:
     - openenv
-    - enterprise-workflow
-    - fraudops
+    - fraud-investigation
+    - world-modeling
     - trust-and-safety
-    - multi-app

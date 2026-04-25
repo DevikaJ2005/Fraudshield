@@ -1,0 +1,15 @@
+{
+  "product_name": "FraudShield",
+  "snapshot_id": "fraudshield-realworld-v2",
+  "snapshot_sha256": "032E571A9F1D10776515695FEB27F70E44D49B986D879A5C9EF9430978AA0338",
+  "source_provider": "Kaggle / ULB",
+  "dataset_id": "mlg-ulb/creditcardfraud",
+  "dataset_title": "Credit Card Fraud Detection",
+  "source_url": "https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud",
+  "retrieved_at": "2026-03-30T18:13:06.935921+00:00",
+  "transform_version": "2.0",
+  "seed": 42,
+  "live_data_used": false,
+  "contains_real_pii": false,
+  "policy_statement": "FraudShield uses a frozen public-data snapshot enriched into synthetic investigation cases. The environment and browser explorer never call live financial systems, do not move real money, and are not intended for production fraud decisions."
+}

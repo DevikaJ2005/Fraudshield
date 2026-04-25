@@ -1,4 +1,4 @@
-"""FastAPI server exposing the FraudShield FraudOps environment."""
+"""FastAPI server exposing the FraudShield OpenEnv API."""
 
 from __future__ import annotations
 
@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from fraudshield_env import FraudShieldEnvironment, TASK_CONFIG
+from llm_agent import SnapshotCalibratedFraudDetectionAgent
 from models import (
     ActionTypeEnum,
     CaseScreenEnum,
@@ -28,54 +29,509 @@ from models import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-DATA_PATH = Path(__file__).resolve().parents[1] / "data"
-APP_VERSION = "0.4.0"
-
-TASK_DESCRIPTIONS = {
-    TaskDifficulty.EASY: {
-        "difficulty": "easy",
-        "description": (
-            "One low-noise case. The agent should open the case, document it, and route it correctly without wasting time."
-        ),
-    },
-    TaskDifficulty.MEDIUM: {
-        "difficulty": "medium",
-        "description": (
-            "One ambiguous case where customer history and policy review are needed before the correct routing appears."
-        ),
-    },
-    TaskDifficulty.HARD: {
-        "difficulty": "hard",
-        "description": (
-            "Two linked fraud cases that require network reasoning, policy-aware escalation, and consistent case notes."
-        ),
-    },
-}
+ROOT_DIR = Path(__file__).resolve().parents[1]
+DATA_PATH = ROOT_DIR / "data"
+APP_VERSION = "0.6.0"
 
 env = FraudShieldEnvironment(data_path=str(DATA_PATH), seed=42)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    """Load bundled task data on server startup."""
+    """Load the frozen snapshot on startup."""
 
     if not env.load_data():
         logger.error("FraudShield failed to load bundled data from %s", DATA_PATH)
     yield
-    logger.info("FraudShield server shutting down")
 
 
 app = FastAPI(
     title="FraudShield",
     description=(
-        "OpenEnv-compatible enterprise FraudOps environment where agents investigate cases across "
-        "queue, profile, and policy tools before resolving or escalating them."
+        "Simulated fraud-investigation environment for OpenEnv. Agents operate under partial "
+        "observability, reveal evidence with investigation tools, and route cases under limited budgets."
     ),
     version=APP_VERSION,
     docs_url="/docs",
     openapi_url="/openapi.json",
     lifespan=lifespan,
 )
+
+
+def _explorer_html() -> str:
+    return """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FraudShield Explorer</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --line: #d7e0ea;
+      --ink: #102033;
+      --muted: #536579;
+      --accent: #0b6dff;
+      --accent-soft: #dbe9ff;
+      --success: #1f7a4d;
+      --warning: #b4690e;
+      --danger: #b42318;
+      --shadow: 0 10px 24px rgba(16, 32, 51, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: linear-gradient(180deg, #eef4ff 0%, var(--bg) 280px);
+      color: var(--ink);
+    }
+    .wrap {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px 18px 44px;
+    }
+    .hero {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 24px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+    .hero h1 { margin: 0 0 8px; font-size: 2rem; }
+    .hero p { margin: 0; color: var(--muted); line-height: 1.5; }
+    .hero-links {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+    .hero-links a {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 340px minmax(0, 1fr);
+      gap: 20px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+    .panel h2, .panel h3 {
+      margin: 0 0 12px;
+      font-size: 1rem;
+    }
+    .field { margin-bottom: 12px; }
+    .field label {
+      display: block;
+      font-size: 0.88rem;
+      color: var(--muted);
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+    select, textarea, input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font: inherit;
+      background: #fff;
+      color: var(--ink);
+    }
+    textarea { min-height: 92px; resize: vertical; }
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    button {
+      border: 0;
+      border-radius: 10px;
+      background: var(--accent);
+      color: #fff;
+      padding: 10px 12px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #edf2fa;
+      color: var(--ink);
+      border: 1px solid var(--line);
+    }
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .status {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #f7f9fc;
+      color: var(--muted);
+      font-size: 0.94rem;
+      border: 1px solid var(--line);
+    }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      background: #fbfdff;
+      border-radius: 14px;
+      padding: 12px;
+    }
+    .card .label {
+      font-size: 0.78rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .card .value {
+      margin-top: 6px;
+      font-size: 1rem;
+      font-weight: 700;
+      word-break: break-word;
+    }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 8px 0 0;
+    }
+    .chip {
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: #154284;
+      font-size: 0.84rem;
+      font-weight: 600;
+    }
+    .trace-list {
+      display: grid;
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .trace-item {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      background: #fff;
+    }
+    .trace-item h4 {
+      margin: 0 0 8px;
+      font-size: 0.95rem;
+    }
+    .trace-item p {
+      margin: 6px 0;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 0.82rem;
+      line-height: 1.45;
+      color: #163047;
+      background: #f7f9fc;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      overflow: auto;
+    }
+    .muted { color: var(--muted); }
+    .inline {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    @media (max-width: 920px) {
+      .grid { grid-template-columns: 1fr; }
+      .actions { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>FraudShield Explorer</h1>
+      <p>
+        This is a lightweight browser UI for the OpenEnv environment. It lets you reset a task,
+        reveal hidden evidence step by step, and see how the heuristic baseline investigates before
+        making a final routing decision.
+      </p>
+      <div class="hero-links">
+        <a href="/docs" target="_blank" rel="noreferrer">Open API docs</a>
+        <a href="/metadata" target="_blank" rel="noreferrer">View metadata JSON</a>
+        <a href="/schema" target="_blank" rel="noreferrer">View schema JSON</a>
+      </div>
+    </section>
+
+    <div class="grid">
+      <aside class="panel">
+        <h2>Controls</h2>
+
+        <div class="field">
+          <label for="task">Task</label>
+          <select id="task">
+            <option value="easy">easy</option>
+            <option value="medium" selected>medium</option>
+            <option value="hard">hard</option>
+          </select>
+        </div>
+
+        <div class="actions">
+          <button id="resetBtn">Reset Episode</button>
+          <button id="stateBtn" class="secondary">Refresh State</button>
+          <button id="traceBtn" class="secondary">Run Heuristic Walkthrough</button>
+        </div>
+
+        <div class="field" style="margin-top:18px;">
+          <label for="reasoning">Reasoning</label>
+          <textarea id="reasoning">Review the visible evidence before taking the next action.</textarea>
+        </div>
+
+        <div class="field">
+          <label for="noteText">Case Note</label>
+          <textarea id="noteText">Reviewed the currently visible evidence before selecting the next workflow step.</textarea>
+        </div>
+
+        <div class="field">
+          <label for="resolution">Resolution</label>
+          <select id="resolution">
+            <option value="approve">approve</option>
+            <option value="block" selected>block</option>
+            <option value="hold">hold</option>
+            <option value="request_docs">request_docs</option>
+            <option value="escalate">escalate</option>
+          </select>
+        </div>
+
+        <h3 style="margin-top:18px;">Action Buttons</h3>
+        <div class="actions">
+          <button data-action="review_transaction">review_transaction</button>
+          <button data-action="fetch_customer_profile">fetch_customer_profile</button>
+          <button data-action="fetch_merchant_profile">fetch_merchant_profile</button>
+          <button data-action="fetch_network_graph">fetch_network_graph</button>
+          <button data-action="check_policy">check_policy</button>
+          <button data-action="add_case_note">add_case_note</button>
+          <button data-action="resolve_case">resolve_case</button>
+        </div>
+
+        <div id="status" class="status">Reset a task to begin exploring the environment.</div>
+      </aside>
+
+      <main class="panel">
+        <h2>Current Observation</h2>
+        <div id="overview" class="cards"></div>
+
+        <div class="panel" style="box-shadow:none; padding:0; border:0; background:transparent;">
+          <h3>Visible Workflow Hints</h3>
+          <div id="hints" class="chips"></div>
+        </div>
+
+        <div class="panel" style="box-shadow:none; padding:0; border:0; background:transparent;">
+          <h3>Revealed Evidence</h3>
+          <pre id="evidence">{}</pre>
+        </div>
+
+        <div class="panel" style="box-shadow:none; padding:0; border:0; background:transparent;">
+          <h3>Current State Snapshot</h3>
+          <pre id="state">No active episode yet.</pre>
+        </div>
+
+        <div class="panel" style="box-shadow:none; padding:0; border:0; background:transparent;">
+          <div class="inline">
+            <h3 style="margin:0;">Heuristic Walkthrough</h3>
+            <span class="muted">Useful before RL training so you can see the current baseline behavior.</span>
+          </div>
+          <div id="trace" class="trace-list"></div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    let currentObservation = null;
+
+    const statusEl = document.getElementById("status");
+    const overviewEl = document.getElementById("overview");
+    const hintsEl = document.getElementById("hints");
+    const evidenceEl = document.getElementById("evidence");
+    const stateEl = document.getElementById("state");
+    const traceEl = document.getElementById("trace");
+
+    function setStatus(message, kind = "neutral") {
+      statusEl.textContent = message;
+      const palette = {
+        neutral: ["#f7f9fc", "#536579"],
+        success: ["#ecfdf3", "#1f7a4d"],
+        warning: ["#fff7ed", "#b4690e"],
+        error: ["#fef3f2", "#b42318"],
+      };
+      const [bg, color] = palette[kind] || palette.neutral;
+      statusEl.style.background = bg;
+      statusEl.style.color = color;
+    }
+
+    function pretty(value) {
+      return JSON.stringify(value, null, 2);
+    }
+
+    function renderObservation(observation) {
+      currentObservation = observation;
+      const budget = observation.app_context?.investigation_budget_remaining ?? "n/a";
+      const timestamp = observation.app_context?.timestamp ?? "n/a";
+      const category = observation.app_context?.item_category ?? "n/a";
+      const linked = observation.linked_case_ids?.length ? observation.linked_case_ids.join(", ") : "hidden / none";
+
+      const cards = [
+        ["Case ID", observation.case_id],
+        ["Task", observation.task_name],
+        ["Workflow View", observation.current_screen],
+        ["Episode Step", observation.episode_step],
+        ["Amount", "$" + observation.case_summary.amount_usd],
+        ["Category", category],
+        ["Timestamp", timestamp],
+        ["Budget Left", budget],
+        ["Remaining Steps", observation.remaining_steps],
+        ["Remaining SLA", observation.remaining_sla],
+        ["Note Required", observation.note_required ? "yes" : "no"],
+        ["Linked Cases", linked],
+      ];
+
+      overviewEl.innerHTML = cards.map(([label, value]) => `
+        <div class="card">
+          <div class="label">${label}</div>
+          <div class="value">${value}</div>
+        </div>
+      `).join("");
+
+      const hints = [
+        "queue_reason: " + observation.case_summary.queue_reason,
+        ...observation.visible_panels.map((item) => "panel: " + item),
+        ...observation.allowed_actions.map((item) => "allowed: " + item),
+      ];
+      hintsEl.innerHTML = hints.map((hint) => `<span class="chip">${hint}</span>`).join("");
+      evidenceEl.textContent = pretty(observation.revealed_evidence || {});
+      updateActionButtons();
+    }
+
+    async function fetchState() {
+      const response = await fetch("/state");
+      const data = await response.json();
+      stateEl.textContent = pretty(data);
+      return data;
+    }
+
+    async function resetEpisode() {
+      const task = document.getElementById("task").value;
+      setStatus("Resetting " + task + " episode...", "neutral");
+      const response = await fetch("/reset?task=" + encodeURIComponent(task), { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) {
+        setStatus(data.detail || "Reset failed.", "error");
+        return;
+      }
+      renderObservation(data.observation);
+      await fetchState();
+      traceEl.innerHTML = "";
+      setStatus("Episode ready. Start with review_transaction to reveal the transaction trace.", "success");
+    }
+
+    async function step(actionType) {
+      if (!currentObservation) {
+        setStatus("Reset an episode first.", "warning");
+        return;
+      }
+
+      const payload = {
+        case_id: currentObservation.case_id,
+        action_type: actionType,
+        reasoning: document.getElementById("reasoning").value.trim(),
+      };
+
+      if (actionType === "add_case_note") {
+        payload.note_text = document.getElementById("noteText").value.trim();
+      }
+      if (actionType === "resolve_case") {
+        payload.resolution = document.getElementById("resolution").value;
+      }
+
+      setStatus("Submitting " + actionType + "...", "neutral");
+      const response = await fetch("/step", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setStatus(data.detail || "Step failed.", "error");
+        return;
+      }
+      renderObservation(data.observation);
+      await fetchState();
+      const reward = data.reward;
+      const doneSuffix = data.done ? " Episode finished." : "";
+      setStatus(
+        `${actionType} -> reward ${reward.value}. ${reward.reason}${doneSuffix}`,
+        data.done ? "success" : "neutral"
+      );
+    }
+
+    function updateActionButtons() {
+      const allowed = new Set((currentObservation?.allowed_actions || []).map(String));
+      document.querySelectorAll("button[data-action]").forEach((button) => {
+        button.disabled = !allowed.has(button.dataset.action);
+      });
+    }
+
+    async function runTrace() {
+      const task = document.getElementById("task").value;
+      setStatus("Running heuristic walkthrough for " + task + "...", "neutral");
+      const response = await fetch("/demo/trace?task=" + encodeURIComponent(task));
+      const data = await response.json();
+      if (!response.ok) {
+        setStatus(data.detail || "Could not run heuristic walkthrough.", "error");
+        return;
+      }
+
+      const cards = data.action_trace.map((item) => `
+        <div class="trace-item">
+          <h4>Step ${item.step}: ${item.action.action_type} on ${item.action.case_id}</h4>
+          <p><strong>Reasoning:</strong> ${item.action.reasoning || "(no reasoning text)"}</p>
+          <p><strong>Reward:</strong> ${item.reward.value} | <strong>Why:</strong> ${item.reward.reason}</p>
+          ${item.action.resolution ? `<p><strong>Resolution:</strong> ${item.action.resolution}</p>` : ""}
+          ${item.action.note_text ? `<p><strong>Note:</strong> ${item.action.note_text}</p>` : ""}
+        </div>
+      `).join("");
+      traceEl.innerHTML = cards || '<div class="trace-item"><p>No trace steps returned.</p></div>';
+      setStatus("Heuristic walkthrough finished. You can compare this flow with your later RL-trained policy.", "success");
+    }
+
+    document.getElementById("resetBtn").addEventListener("click", resetEpisode);
+    document.getElementById("stateBtn").addEventListener("click", fetchState);
+    document.getElementById("traceBtn").addEventListener("click", runTrace);
+    document.querySelectorAll("button[data-action]").forEach((button) => {
+      button.addEventListener("click", () => step(button.dataset.action));
+    });
+  </script>
+</body>
+</html>"""
 
 
 def _ensure_data_loaded() -> None:
@@ -86,14 +542,19 @@ def _ensure_data_loaded() -> None:
 def _task_payload() -> Dict[str, Any]:
     return {
         task.value: {
-            **TASK_DESCRIPTIONS[task],
+            "difficulty": task.value,
+            "description": TASK_CONFIG[task]["description"],
             "num_cases": TASK_CONFIG[task]["num_cases"],
             "max_steps": TASK_CONFIG[task]["max_steps"],
             "sla_limit": TASK_CONFIG[task]["sla_limit"],
-            "apps": [screen.value for screen in CaseScreenEnum],
+            "investigation_budget": TASK_CONFIG[task]["investigation_budget"],
         }
         for task in TaskDifficulty
     }
+
+
+def _workflow_views() -> list[str]:
+    return [screen.value for screen in CaseScreenEnum]
 
 
 def _metadata_payload() -> Dict[str, Any]:
@@ -102,10 +563,7 @@ def _metadata_payload() -> Dict[str, Any]:
         "name": "fraudshield",
         "title": "FraudShield",
         "version": APP_VERSION,
-        "description": (
-            "Enterprise fraud-operations environment for OpenEnv. Agents investigate queue cases, "
-            "fetch evidence from internal tools, write notes, and resolve or escalate under SLA pressure."
-        ),
+        "description": app.description,
         "transport": {
             "rest": {
                 "health": "/health",
@@ -121,7 +579,7 @@ def _metadata_payload() -> Dict[str, Any]:
             "openapi": "/openapi.json",
         },
         "action_families": [action.value for action in ActionTypeEnum],
-        "apps": [screen.value for screen in CaseScreenEnum],
+        "workflow_views": _workflow_views(),
         "tasks": _task_payload(),
         "data_snapshot": env.data_loader.get_bundle_summary(),
     }
@@ -138,6 +596,38 @@ def _schema_payload() -> Dict[str, Any]:
         "reset_result": ResetResult.model_json_schema(),
         "step_result": StepResult.model_json_schema(),
         "tasks": _task_payload(),
+    }
+
+
+def _demo_trace_payload(task: TaskDifficulty) -> Dict[str, Any]:
+    demo_env = FraudShieldEnvironment(data_path=str(DATA_PATH), seed=42)
+    demo_env.load_data()
+    reset_result = demo_env.reset(task.value)
+    agent = SnapshotCalibratedFraudDetectionAgent()
+
+    observation = reset_result.observation
+    action_trace: list[Dict[str, Any]] = []
+    max_steps = TASK_CONFIG[task]["max_steps"]
+
+    while not demo_env.is_done and demo_env.step_count < max_steps:
+        action = agent.decide(observation)
+        result = demo_env.step(action)
+        action_trace.append(
+            {
+                "step": demo_env.step_count,
+                "action": action.model_dump(mode="json"),
+                "reward": result.reward.model_dump(mode="json"),
+                "done": result.done,
+            }
+        )
+        observation = result.observation
+
+    return {
+        "task": task.value,
+        "agent_name": agent.name,
+        "initial_observation": reset_result.observation.model_dump(mode="json"),
+        "action_trace": action_trace,
+        "episode_report": demo_env.get_episode_report(),
     }
 
 
@@ -162,7 +652,7 @@ def _mcp_tool_descriptors() -> list[Dict[str, Any]]:
     return [
         {
             "name": "environment.reset",
-            "description": "Start a new easy, medium, or hard FraudOps episode.",
+            "description": "Start a new easy, medium, or hard FraudShield episode.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -172,27 +662,27 @@ def _mcp_tool_descriptors() -> list[Dict[str, Any]]:
         },
         {
             "name": "environment.step",
-            "description": "Submit one enterprise workflow action for the active case.",
+            "description": "Submit one investigation or resolution action for the active case.",
             "inputSchema": FraudCheckAction.model_json_schema(),
         },
         {
             "name": "environment.state",
-            "description": "Read the current episode state without changing it.",
+            "description": "Read the full current episode state.",
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
             "name": "environment.info",
-            "description": "Read static environment information and task metadata.",
+            "description": "Read static environment information and dataset metadata.",
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
             "name": "environment.tasks",
-            "description": "List the three graded FraudOps tasks.",
+            "description": "List the available graded tasks.",
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
             "name": "environment.metadata",
-            "description": "Read runtime metadata for OpenEnv and MCP clients.",
+            "description": "Read runtime metadata for OpenEnv clients.",
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
@@ -226,6 +716,7 @@ def _run_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             "name": "fraudshield",
             "version": APP_VERSION,
             "tasks": _task_payload(),
+            "workflow_views": _workflow_views(),
             "data_snapshot": env.data_loader.get_bundle_summary(),
         }
     if name == "environment.tasks":
@@ -237,6 +728,11 @@ def _run_mcp_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     raise ValueError(f"Unknown MCP tool: {name}")
 
 
+@app.get("/", response_class=HTMLResponse)
+async def explorer() -> HTMLResponse:
+    return HTMLResponse(_explorer_html())
+
+
 @app.get("/health")
 async def health_check() -> Dict[str, Any]:
     if not env.data_loaded:
@@ -245,7 +741,7 @@ async def health_check() -> Dict[str, Any]:
         "status": "healthy" if env.data_loaded else "degraded",
         "service": "fraudshield",
         "data_loaded": env.data_loaded,
-        "apps": [screen.value for screen in CaseScreenEnum],
+        "workflow_views": _workflow_views(),
     }
 
 
@@ -294,6 +790,7 @@ async def get_info() -> Dict[str, Any]:
         "version": APP_VERSION,
         "description": app.description,
         "tasks": _task_payload(),
+        "workflow_views": _workflow_views(),
         "data_snapshot": env.data_loader.get_bundle_summary(),
     }
 
@@ -313,6 +810,15 @@ async def get_metadata() -> Dict[str, Any]:
 async def get_schema() -> Dict[str, Any]:
     _ensure_data_loaded()
     return _schema_payload()
+
+
+@app.get("/demo/trace")
+async def demo_trace(task: TaskDifficulty = TaskDifficulty.MEDIUM) -> Dict[str, Any]:
+    try:
+        return _demo_trace_payload(task)
+    except Exception as exc:
+        logger.exception("Demo trace error")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/mcp")
@@ -352,31 +858,9 @@ async def mcp_endpoint(request: Dict[str, Any]) -> JSONResponse:
 
 
 @app.exception_handler(Exception)
-async def global_exception_handler(_, exc: Exception) -> JSONResponse:
+async def global_exception_handler(_: Any, exc: Exception) -> JSONResponse:
     logger.exception("Unhandled exception")
     return JSONResponse(status_code=500, content={"detail": str(exc)})
-
-
-@app.get("/")
-async def root() -> Dict[str, Any]:
-    return {
-        "service": "FraudShield OpenEnv",
-        "version": APP_VERSION,
-        "description": app.description,
-        "endpoints": {
-            "health": "GET /health",
-            "reset": "POST /reset?task=easy|medium|hard",
-            "step": "POST /step",
-            "state": "GET /state",
-            "info": "GET /info",
-            "tasks": "GET /tasks",
-            "metadata": "GET /metadata",
-            "schema": "GET /schema",
-            "mcp": "POST /mcp",
-        },
-        "apps": [screen.value for screen in CaseScreenEnum],
-        "docs": "/docs",
-    }
 
 
 def main() -> None:

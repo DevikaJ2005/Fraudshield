@@ -12,6 +12,7 @@ The Space runs:
 - `python -m server.app`
 - FastAPI on port `7860`
 - frozen snapshot data from `data/fraudshield_cases.json`
+- a lightweight explorer UI at `/`
 
 The HTTP runtime exposes:
 
@@ -65,6 +66,14 @@ curl http://127.0.0.1:7860/metadata
 curl http://127.0.0.1:7860/schema
 ```
 
+You can also open:
+
+```bash
+http://127.0.0.1:7860/
+```
+
+to inspect the environment in the browser before training.
+
 The live server should also pass:
 
 ```bash
@@ -96,4 +105,5 @@ Aliases accepted by the code:
 
 - Runtime evaluation uses only the committed snapshot.
 - The richer investigation workflow is available through both REST and MCP.
+- The root page is a lightweight manual explorer, not a separate product layer.
 - The submission-safe inference path remains deterministic when no API credentials are injected.

@@ -43,15 +43,20 @@ def check_health_endpoint(client):
     return data.get("status") in {"healthy", "degraded"}
 
 
-def check_tasks_endpoint(client):
-    print("\n4. Tasks Endpoint Check:")
-    response = client.get("/tasks")
-    print(f"   GET /tasks -> {response.status_code}")
-    if response.status_code != 200:
+def check_info_and_tasks(client):
+    print("\n4. Info + Tasks Check:")
+    info = client.get("/info")
+    print(f"   GET /info -> {info.status_code}")
+    if info.status_code != 200:
         return False
-    data = response.json()
-    print(f"   tasks={list(data.keys())}")
-    return set(data.keys()) == {"easy", "medium", "hard"}
+
+    tasks = client.get("/tasks")
+    print(f"   GET /tasks -> {tasks.status_code}")
+    if tasks.status_code != 200:
+        return False
+    task_payload = tasks.json()
+    print(f"   tasks={list(task_payload.keys())}")
+    return set(task_payload.keys()) == {"easy", "medium", "hard"}
 
 
 def check_reset_and_state(client):
@@ -82,10 +87,20 @@ def check_step_flow(client, case_id: str):
     if review_response.status_code != 200:
         return False
 
+    network_action = {
+        "case_id": case_id,
+        "action_type": "fetch_network_graph",
+        "reasoning": "Reveal linked activity before final routing.",
+    }
+    network_response = client.post("/step", json=network_action)
+    print(f"   fetch_network_graph -> {network_response.status_code}")
+    if network_response.status_code != 200:
+        return False
+
     note_action = {
         "case_id": case_id,
         "action_type": "add_case_note",
-        "note_text": "Reviewed the case details and documented the initial enterprise workflow findings.",
+        "note_text": "Reviewed the transaction trace and hidden evidence before selecting the final route.",
     }
     note_response = client.post("/step", json=note_action)
     print(f"   add_case_note -> {note_response.status_code}")
@@ -96,7 +111,7 @@ def check_step_flow(client, case_id: str):
         "case_id": case_id,
         "action_type": "resolve_case",
         "resolution": "block",
-        "reasoning": "The reviewed case signals justify a blocking decision in this smoke test.",
+        "reasoning": "The reviewed case signals justify a blocking decision in this API smoke test.",
     }
     resolve_response = client.post("/step", json=resolve_action)
     print(f"   resolve_case -> {resolve_response.status_code}")
@@ -108,12 +123,52 @@ def check_step_flow(client, case_id: str):
     return True
 
 
+def check_schema_and_metadata(client):
+    print("\n7. Schema + Metadata Check:")
+    metadata = client.get("/metadata")
+    schema = client.get("/schema")
+    print(f"   GET /metadata -> {metadata.status_code}")
+    print(f"   GET /schema -> {schema.status_code}")
+    if metadata.status_code != 200 or schema.status_code != 200:
+        return False
+    metadata_payload = metadata.json()
+    print(f"   workflow_views={metadata_payload.get('workflow_views')}")
+    return metadata_payload.get("name") == "fraudshield"
+
+
 def check_invalid_payload(client, case_id: str):
-    print("\n7. Invalid Payload Check:")
+    print("\n8. Invalid Payload Check:")
     invalid_action = {"case_id": case_id, "action_type": "resolve_case", "reasoning": "Too short"}
     response = client.post("/step", json=invalid_action)
     print(f"   invalid resolve_case -> {response.status_code}")
     return response.status_code in {400, 422}
+
+
+def check_mcp(client):
+    print("\n9. MCP Check:")
+    initialize = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    print(f"   initialize -> {initialize.status_code}")
+    if initialize.status_code != 200:
+        return False
+
+    tool_list = client.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+    print(f"   tools/list -> {tool_list.status_code}")
+    if tool_list.status_code != 200:
+        return False
+    tools = tool_list.json()["result"]["tools"]
+    print(f"   tool_count={len(tools)}")
+
+    tool_call = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "environment.tasks", "arguments": {}},
+        },
+    )
+    print(f"   tools/call environment.tasks -> {tool_call.status_code}")
+    return tool_call.status_code == 200
 
 
 def main():
@@ -131,12 +186,14 @@ def main():
 
     checks = []
     checks.append(("Health endpoint", check_health_endpoint(client)))
-    checks.append(("Tasks endpoint", check_tasks_endpoint(client)))
+    checks.append(("Info + tasks", check_info_and_tasks(client)))
     success, case_id = check_reset_and_state(client)
     checks.append(("Reset + state", success))
+    checks.append(("Schema + metadata", check_schema_and_metadata(client)))
     if success and case_id:
         checks.append(("Step flow", check_step_flow(client, case_id)))
         checks.append(("Invalid payload", check_invalid_payload(client, case_id)))
+    checks.append(("MCP flow", check_mcp(client)))
 
     print("\n" + "=" * 70)
     for name, passed in checks:

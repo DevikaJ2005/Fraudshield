@@ -1,0 +1,20 @@
+{
+  "status": "pending_hf_credits",
+  "updated_at": "2026-04-25T10:25:29+00:00",
+  "trainer": "TRL GRPO (Colab-ready scaffold)",
+  "base_model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "baseline": {
+    "easy": 0.99,
+    "medium": 0.35,
+    "hard": 0.7425,
+    "final_score": 0.6941666666666667
+  },
+  "trained": {},
+  "artifact_urls": {
+    "colab_notebook": "notebooks/fraudshield_trl_colab.ipynb",
+    "reward_plot": null,
+    "loss_plot": null,
+    "comparison_table": null
+  },
+  "notes": "The OpenEnv environment, browser explorer UI, API validation, and heuristic baseline are ready now. The real TRL training run and plot artifacts will be generated in Colab once GPU compute is available."
+}

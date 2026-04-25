@@ -1,4 +1,4 @@
-"""FraudShield enterprise FraudOps environment implementation."""
+"""FraudShield partial-observability environment implementation."""
 
 from __future__ import annotations
 
@@ -29,7 +29,9 @@ TASK_CONFIG: Dict[TaskDifficulty, Dict[str, Any]] = {
         "max_steps": 6,
         "sla_limit": 5,
         "ideal_steps": 3,
-        "description": "Single low-noise case with an obvious routing decision.",
+        "investigation_budget": 1,
+        "minimum_fetches_for_bonus": 1,
+        "description": "Single low-noise case with strong visible cues and one fetch budget.",
     },
     TaskDifficulty.MEDIUM: {
         "source_task": "medium",
@@ -37,7 +39,9 @@ TASK_CONFIG: Dict[TaskDifficulty, Dict[str, Any]] = {
         "max_steps": 8,
         "sla_limit": 6,
         "ideal_steps": 5,
-        "description": "Single ambiguous case that requires profile review and policy lookup.",
+        "investigation_budget": 2,
+        "minimum_fetches_for_bonus": 1,
+        "description": "Single mixed-signal case that requires at least one investigation before routing.",
     },
     TaskDifficulty.HARD: {
         "source_task": "hard",
@@ -45,13 +49,22 @@ TASK_CONFIG: Dict[TaskDifficulty, Dict[str, Any]] = {
         "max_steps": 14,
         "sla_limit": 11,
         "ideal_steps": 9,
-        "description": "Two linked fraud cases that require network reasoning and escalation policy.",
+        "investigation_budget": 3,
+        "minimum_fetches_for_bonus": 1,
+        "description": "Two misleading linked cases where graph evidence is usually required.",
     },
+}
+
+FETCH_ACTIONS = {
+    ActionTypeEnum.FETCH_CUSTOMER_PROFILE,
+    ActionTypeEnum.FETCH_MERCHANT_PROFILE,
+    ActionTypeEnum.FETCH_NETWORK_GRAPH,
+    ActionTypeEnum.CHECK_POLICY,
 }
 
 
 class FraudShieldEnvironment:
-    """OpenEnv-compatible enterprise fraud-operations environment."""
+    """OpenEnv-compatible fraud-investigation environment."""
 
     def __init__(self, data_path: str = "data", seed: int = 42):
         self.seed = seed
@@ -96,7 +109,7 @@ class FraudShieldEnvironment:
             raise RuntimeError("FraudShield data bundle could not be loaded.")
 
     def reset(self, task: str = "easy") -> ResetResult:
-        """Start a new enterprise workflow episode."""
+        """Start a new fraud-investigation episode."""
 
         self.ensure_data_loaded()
 
@@ -119,7 +132,7 @@ class FraudShieldEnvironment:
         self.active_case_id = self.case_order[0]
         self.case_state = {
             case_id: {
-                "status": "queued",
+                "status": "triage",
                 "reviewed": False,
                 "revealed_evidence": {},
                 "note_count": 0,
@@ -133,6 +146,8 @@ class FraudShieldEnvironment:
                 "redundant_actions": 0,
                 "anti_hacking_hits": 0,
                 "action_history": [],
+                "fetches_used": 0,
+                "fetch_budget_remaining": config["investigation_budget"],
             }
             for case_id in self.case_order
         }
@@ -143,14 +158,15 @@ class FraudShieldEnvironment:
             "num_cases": config["num_cases"],
             "max_steps": config["max_steps"],
             "sla_limit": config["sla_limit"],
+            "investigation_budget": config["investigation_budget"],
             "description": config["description"],
-            "apps": [screen.value for screen in CaseScreenEnum],
+            "workflow_views": [screen.value for screen in CaseScreenEnum],
             "data_snapshot": self.data_loader.get_bundle_summary(),
         }
         return ResetResult(observation=self._build_observation(), info=info)
 
     def step(self, action: FraudCheckAction) -> StepResult:
-        """Apply a single workflow action."""
+        """Apply a single investigation or resolution action."""
 
         if self.is_done:
             raise RuntimeError("Episode is done. Call reset() to start a new episode.")
@@ -178,14 +194,13 @@ class FraudShieldEnvironment:
 
         case_id = action.case_id
         state = self.case_state[case_id]
-        case = self.workflow_cases[case_id]
 
         if state["resolved"] and action.action_type != ActionTypeEnum.REVIEW_TRANSACTION:
             reward = self._apply_action_outcome(
                 action=action,
                 case_id=case_id,
                 base_value=-0.22,
-                reason="Resolved cases cannot be modified; switch back to the queue or another open case.",
+                reason="Resolved cases cannot be modified; move to an open case instead.",
                 valid_action=False,
             )
             return self._build_step_result(reward, {"valid_action": False, "error": "resolved_case"})
@@ -264,9 +279,7 @@ class FraudShieldEnvironment:
         evidence_coverage = sum(report["evidence_coverage"] for report in case_reports) / case_count
         policy_compliance = sum(1.0 if report["policy_compliant"] else 0.0 for report in case_reports) / case_count
         workflow_completion = (
-            sum(report["workflow_completion"] for report in case_reports) / case_count
-            if case_reports
-            else 0.0
+            sum(report["workflow_completion"] for report in case_reports) / case_count if case_reports else 0.0
         )
         overstep_penalty = max(0, self.step_count - TASK_CONFIG[self.current_task]["ideal_steps"]) * 0.05
         efficiency = max(
@@ -322,7 +335,7 @@ class FraudShieldEnvironment:
                 "easy_case_01": self._make_workflow_case(
                     case_id="easy_case_01",
                     raw_case=source_case,
-                    queue_reason="New seller plus geo mismatch triggered a manual review queue.",
+                    queue_reason="High-value purchase queued for a quick manual review.",
                     correct_resolution=ResolutionEnum.BLOCK,
                     required_tools={"transaction_review", "case_note"},
                     useful_tools={"merchant_profile"},
@@ -338,7 +351,7 @@ class FraudShieldEnvironment:
                 "medium_case_01": self._make_workflow_case(
                     case_id="medium_case_01",
                     raw_case=source_case,
-                    queue_reason="Conflicting customer and merchant signals require policy-aware review.",
+                    queue_reason="Mixed signals triggered review and supporting evidence is needed.",
                     correct_resolution=ResolutionEnum.REQUEST_DOCS,
                     required_tools={"transaction_review", "customer_profile", "policy_guide", "case_note"},
                     useful_tools={"merchant_profile"},
@@ -352,10 +365,10 @@ class FraudShieldEnvironment:
         primary = self._make_workflow_case(
             case_id="hard_case_primary",
             raw_case=hard_cases[0],
-            queue_reason="Linked merchant cluster with repeated abuse indicators needs escalation review.",
+            queue_reason="Operational anomaly spike triggered a higher-touch review.",
             correct_resolution=ResolutionEnum.ESCALATE,
-            required_tools={"transaction_review", "network_graph", "policy_guide", "case_note"},
-            useful_tools={"merchant_profile"},
+            required_tools={"transaction_review", "network_graph", "merchant_profile", "policy_guide", "case_note"},
+            useful_tools=set(),
             policy_required=True,
             linked_case_ids=["hard_case_secondary"],
             role="primary",
@@ -363,10 +376,10 @@ class FraudShieldEnvironment:
         secondary = self._make_workflow_case(
             case_id="hard_case_secondary",
             raw_case=hard_cases[1],
-            queue_reason="Connected follow-on case shares entities with an open fraud ring alert.",
+            queue_reason="A related anomaly surfaced in the same review wave.",
             correct_resolution=ResolutionEnum.BLOCK,
-            required_tools={"transaction_review", "network_graph", "policy_guide", "case_note"},
-            useful_tools={"customer_profile"},
+            required_tools={"transaction_review", "network_graph", "customer_profile", "policy_guide", "case_note"},
+            useful_tools=set(),
             policy_required=True,
             linked_case_ids=["hard_case_primary"],
             role="secondary",
@@ -426,73 +439,70 @@ class FraudShieldEnvironment:
         shipping_country = transaction["shipping_address"]
         device_country = transaction["device_country"]
         geo_mismatch = shipping_country != device_country
+        timestamp = transaction["timestamp"]
 
         queue_card = {
             "case_id": case_id,
             "priority": self._priority_label(risk_score, business_cost),
             "queue_reason": queue_reason,
-            "visible_risk_band": self._risk_band(risk_score),
-            "status": "queued",
-            "linked_case_ids": list(linked_case_ids),
+            "visible_risk_band": "review",
+            "status": "triage",
+            "linked_case_ids": [],
         }
 
         transaction_review = {
-            "app": CaseScreenEnum.CASE_CONSOLE.value,
-            "summary": self._transaction_summary(transaction, risk_score, geo_mismatch),
+            "view": CaseScreenEnum.CASE_CONSOLE.value,
+            "summary": self._transaction_summary(transaction, geo_mismatch),
             "facts": {
                 "amount_usd": transaction["amount"],
                 "item_category": transaction["item_category"],
+                "timestamp": timestamp,
                 "shipping_country": shipping_country,
                 "device_country": device_country,
                 "payment_method": transaction["payment_method"],
-                "seller_account_age_days": transaction["seller_account_age_days"],
-                "previous_fraud_flags": transaction["previous_fraud_flags"],
-                "shared_device_accounts_24h": transaction["shared_device_accounts_24h"],
+                "shipping_speed": transaction["shipping_speed"],
                 "same_address_orders_24h": transaction["same_address_orders_24h"],
             },
-            "alerts": self._transaction_alerts(transaction, history),
         }
         customer_profile = {
-            "app": CaseScreenEnum.CUSTOMER_PROFILE.value,
-            "summary": self._customer_summary(transaction, history),
+            "view": CaseScreenEnum.CUSTOMER_PROFILE.value,
+            "summary": self._customer_summary(transaction),
             "facts": {
                 "buyer_account_age_days": transaction["buyer_account_age_days"],
                 "buyer_disputes_90d": transaction["buyer_disputes_90d"],
                 "is_repeat_buyer": transaction["is_repeat_buyer"],
-                "linked_cards_7d": history["linked_cards_7d"],
-                "recent_refunds_7d": history["recent_refunds_7d"],
             },
         }
         merchant_profile = {
-            "app": CaseScreenEnum.MERCHANT_PROFILE.value,
-            "summary": self._merchant_summary(transaction, history),
+            "view": CaseScreenEnum.MERCHANT_PROFILE.value,
+            "summary": self._merchant_summary(transaction),
             "facts": {
                 "seller_account_age_days": transaction["seller_account_age_days"],
                 "seller_avg_rating": transaction["seller_avg_rating"],
                 "num_seller_reviews": transaction["num_seller_reviews"],
                 "seller_chargeback_rate_30d": transaction["seller_chargeback_rate_30d"],
-                "seller_transactions_1h": history["seller_transactions_1h"],
             },
         }
         network_graph = {
-            "app": CaseScreenEnum.CASE_CONSOLE.value,
+            "view": CaseScreenEnum.CASE_CONSOLE.value,
             "summary": self._network_summary(role, linked_case_ids, history),
             "facts": {
+                "shared_device_accounts_24h": transaction["shared_device_accounts_24h"],
+                "previous_fraud_flags": transaction["previous_fraud_flags"],
                 "cluster_alert_score": history["cluster_alert_score"],
+                "linked_cards_7d": history["linked_cards_7d"],
                 "linked_case_ids": list(linked_case_ids),
-                "shared_seller_id": transaction["seller_id"],
-                "shared_buyer_pattern": transaction["buyer_id"].startswith("buyer_linked"),
             },
         }
         policy_guide = {
-            "app": CaseScreenEnum.POLICY_ESCALATION.value,
-            "summary": self._policy_summary(correct_resolution, policy_required, role),
+            "view": CaseScreenEnum.POLICY_ESCALATION.value,
+            "summary": self._policy_summary(policy_required, business_cost),
             "facts": {
                 "policy_required": policy_required,
-                "correct_resolution_hint": correct_resolution.value,
-                "escalate_if_business_cost_above": 1.35,
-                "request_docs_if_flags_and_chargebacks": True,
-                "review_note_required": True,
+                "note_required": True,
+                "request_docs_on_unresolved_conflict": self.current_task != TaskDifficulty.EASY,
+                "escalate_if_cluster_and_loss": role == "primary" and business_cost >= 1.35,
+                "high_loss_threshold": 1.35,
             },
         }
 
@@ -510,6 +520,10 @@ class FraudShieldEnvironment:
             "linked_case_ids": list(linked_case_ids),
             "role": role,
             "queue_card": queue_card,
+            "hidden_flags": {
+                "payment_ops_high_risk": self._high_risk_payment_ops(transaction, geo_mismatch),
+                "network_high_risk": history["cluster_alert_score"] >= 0.7,
+            },
             "evidence_catalog": {
                 "transaction_review": transaction_review,
                 "customer_profile": customer_profile,
@@ -526,93 +540,82 @@ class FraudShieldEnvironment:
             return "P2"
         return "P3"
 
-    def _risk_band(self, risk_score: float) -> str:
-        if risk_score >= 0.68:
-            return "high"
-        if risk_score >= 0.45:
-            return "medium"
-        return "low"
-
-    def _transaction_summary(self, transaction: Dict[str, Any], risk_score: float, geo_mismatch: bool) -> str:
-        seller_age = transaction["seller_account_age_days"]
-        flags = transaction["previous_fraud_flags"]
+    def _transaction_summary(self, transaction: Dict[str, Any], geo_mismatch: bool) -> str:
         return (
-            f"Amount ${transaction['amount']:.2f}; risk band {self._risk_band(risk_score)}; "
-            f"seller age {seller_age}d; prior flags {flags}; geo mismatch={geo_mismatch}."
+            f"Payment {transaction['payment_method']}; shipping {transaction['shipping_speed']}; "
+            f"same-address orders={transaction['same_address_orders_24h']}; geo mismatch={geo_mismatch}."
         )
 
-    def _transaction_alerts(self, transaction: Dict[str, Any], history: Dict[str, Any]) -> List[str]:
-        alerts: List[str] = []
-        if transaction["seller_account_age_days"] <= 90:
-            alerts.append("Seller account is newly created.")
-        if transaction["device_country"] != transaction["shipping_address"]:
-            alerts.append("Device country does not match shipping country.")
-        if transaction["shared_device_accounts_24h"] >= 6:
-            alerts.append("Device was reused across multiple accounts in the last 24h.")
-        if history["cluster_alert_score"] >= 0.7:
-            alerts.append("Cluster alert score is elevated.")
-        if not alerts:
-            alerts.append("No single transaction alert is decisive on its own.")
-        return alerts
-
-    def _customer_summary(self, transaction: Dict[str, Any], history: Dict[str, Any]) -> str:
+    def _customer_summary(self, transaction: Dict[str, Any]) -> str:
         return (
             f"Buyer age {transaction['buyer_account_age_days']}d; disputes {transaction['buyer_disputes_90d']}; "
-            f"repeat buyer={transaction['is_repeat_buyer']}; linked cards {history['linked_cards_7d']}."
+            f"repeat buyer={transaction['is_repeat_buyer']}."
         )
 
-    def _merchant_summary(self, transaction: Dict[str, Any], history: Dict[str, Any]) -> str:
+    def _merchant_summary(self, transaction: Dict[str, Any]) -> str:
         return (
             f"Seller rating {transaction['seller_avg_rating']:.2f}; reviews {transaction['num_seller_reviews']}; "
-            f"chargeback rate {transaction['seller_chargeback_rate_30d']:.3f}; velocity {history['seller_transactions_1h']}/h."
+            f"chargeback rate {transaction['seller_chargeback_rate_30d']:.3f}."
         )
 
     def _network_summary(self, role: str, linked_case_ids: List[str], history: Dict[str, Any]) -> str:
         if not linked_case_ids:
-            return "No strong linked-case pattern is visible from the current graph sample."
+            return (
+                f"Graph review surfaced cluster score {history['cluster_alert_score']:.2f} "
+                "with no immediately visible linked cases."
+            )
         if role == "primary":
             return (
-                f"Graph shows repeated shared entities across {len(linked_case_ids) + 1} fraud alerts; "
-                f"cluster score {history['cluster_alert_score']:.2f} suggests coordinated activity."
+                f"Graph review surfaced a cluster score of {history['cluster_alert_score']:.2f} "
+                "and a shared-entity pattern worth escalation review."
             )
         return (
-            f"Graph ties this case to {', '.join(linked_case_ids)} through shared seller/device patterns; "
-            f"cluster score {history['cluster_alert_score']:.2f}."
+            f"Graph review surfaced a cluster score of {history['cluster_alert_score']:.2f} "
+            "and a related-activity pattern on this case."
         )
 
-    def _policy_summary(self, correct_resolution: ResolutionEnum, policy_required: bool, role: str) -> str:
+    def _policy_summary(self, policy_required: bool, business_cost: float) -> str:
         if not policy_required:
-            return "Policy allows direct approve/block resolution after a valid note when evidence is clear."
-        if role == "primary" and correct_resolution == ResolutionEnum.ESCALATE:
-            return "Escalate high-loss linked clusters when ring evidence and business impact are both high."
-        if correct_resolution == ResolutionEnum.REQUEST_DOCS:
-            return "Request documents when mixed signals remain after profile review."
-        return "Use policy routing before final resolution; high-risk linked cases should not be approved."
+            return "Policy allows direct approve or block decisions once a note is added."
+        if business_cost >= 1.35:
+            return "Policy recommends escalation when hidden network risk and business impact are both elevated."
+        return "Policy recommends requesting documents or holding the case when signals remain mixed."
+
+    def _high_risk_payment_ops(self, transaction: Dict[str, Any], geo_mismatch: bool) -> bool:
+        return bool(
+            transaction["payment_method"] in {"prepaid_card", "gift_card", "crypto_gateway"}
+            or transaction["shipping_speed"] in {"same-day", "overnight"}
+            or transaction["same_address_orders_24h"] >= 5
+            or geo_mismatch
+        )
 
     def _handle_review(self, case_id: str, action: FraudCheckAction) -> Reward:
         self.active_case_id = case_id
         self.current_screen = CaseScreenEnum.CASE_CONSOLE
         state = self.case_state[case_id]
+        case = self.workflow_cases[case_id]
         if state["reviewed"]:
             return self._apply_action_outcome(
                 action=action,
                 case_id=case_id,
-                base_value=-0.08,
-                reason="Transaction review was already opened for this case.",
+                base_value=-0.05,
+                reason="Transaction review was already completed for this case.",
                 evidence_key="transaction_review",
                 redundant=True,
             )
 
         state["reviewed"] = True
         state["status"] = "in_review"
-        state["revealed_evidence"]["transaction_review"] = self.workflow_cases[case_id]["evidence_catalog"][
-            "transaction_review"
-        ]
+        state["revealed_evidence"]["transaction_review"] = case["evidence_catalog"]["transaction_review"]
+        bonus = 0.08 if case["hidden_flags"]["payment_ops_high_risk"] else 0.0
+        reason = "Transaction review revealed the operational transaction trace."
+        if bonus > 0:
+            reason += " The review surfaced high-risk payment or fulfillment signals."
         return self._apply_action_outcome(
             action=action,
             case_id=case_id,
-            base_value=0.09,
-            reason="Transaction review opened the Case Console and revealed the core case facts.",
+            base_value=0.04 + bonus,
+            reason=reason,
             evidence_key="transaction_review",
         )
 
@@ -632,7 +635,7 @@ class FraudShieldEnvironment:
                 action=action,
                 case_id=case_id,
                 base_value=-0.14,
-                reason="Open the transaction in Case Console before pulling deeper evidence.",
+                reason="Open the transaction review before pulling deeper evidence.",
                 valid_action=False,
             )
 
@@ -641,25 +644,30 @@ class FraudShieldEnvironment:
             return self._apply_action_outcome(
                 action=action,
                 case_id=case_id,
-                base_value=-0.09,
+                base_value=-0.05,
                 reason=f"{evidence_key} was already fetched for this case.",
                 evidence_key=evidence_key,
                 redundant=True,
             )
 
+        over_budget = state["fetch_budget_remaining"] <= 0
+        if not over_budget:
+            state["fetch_budget_remaining"] -= 1
+        state["fetches_used"] += 1
         state["revealed_evidence"][evidence_key] = case["evidence_catalog"][evidence_key]
+        state["status"] = "investigating"
         if evidence_key == "policy_guide":
             state["policy_checked"] = True
 
         useful = evidence_key in case["required_tools"] or evidence_key in case["useful_tools"]
-        base_value = 0.08 if useful else 0.03
-        reason = f"{evidence_key} added new evidence in {screen.value}."
-        if evidence_key == "policy_guide" and case["policy_required"]:
-            base_value = 0.10
-            reason = "Policy lookup revealed the routing rules required for this case."
-        elif evidence_key == "network_graph" and case["linked_case_ids"]:
-            base_value = 0.10
-            reason = "Network graph connected the linked cases and exposed shared-entity risk."
+        base_value = 0.05 if useful else 0.0
+        reason = f"{evidence_key} revealed new hidden evidence."
+        if evidence_key == "network_graph" and case["hidden_flags"]["network_high_risk"]:
+            base_value += 0.08
+            reason = "Network graph revealed high-risk cluster evidence before the final decision."
+        if over_budget:
+            base_value -= 0.03
+            reason += " The fetch happened after the investigation budget was exhausted."
 
         return self._apply_action_outcome(
             action=action,
@@ -704,7 +712,7 @@ class FraudShieldEnvironment:
             action=action,
             case_id=case_id,
             base_value=0.09,
-            reason="Added a case note that documents the current investigation state.",
+            reason="Added a case note that documents the investigation state.",
             evidence_key="case_note",
         )
 
@@ -726,12 +734,17 @@ class FraudShieldEnvironment:
         assert action.resolution is not None  # validated by Pydantic
 
         missing_required = [
-            tool
-            for tool in case["required_tools"]
-            if tool not in self._completed_tool_markers(case_id)
+            tool for tool in case["required_tools"] if tool not in self._completed_tool_markers(case_id)
         ]
         note_missing = state["note_count"] == 0
         policy_missing = case["policy_required"] and not state["policy_checked"]
+        no_fetch_evidence = (
+            self.current_task in {TaskDifficulty.MEDIUM, TaskDifficulty.HARD} and state["fetches_used"] == 0
+        )
+        used_investigation_bonus = (
+            self.current_task in {TaskDifficulty.MEDIUM, TaskDifficulty.HARD}
+            and state["fetches_used"] >= TASK_CONFIG[self.current_task]["minimum_fetches_for_bonus"]
+        )
         correct = action.resolution == case["correct_resolution"]
         policy_compliant = correct and (not policy_missing)
 
@@ -742,6 +755,10 @@ class FraudShieldEnvironment:
             base_value -= 0.20
         if missing_required and correct:
             base_value -= 0.16 * min(2, len(missing_required))
+        if no_fetch_evidence:
+            base_value -= 0.10
+        if correct and used_investigation_bonus:
+            base_value += 0.15
 
         reason_parts = []
         if correct:
@@ -756,6 +773,10 @@ class FraudShieldEnvironment:
             reason_parts.append("A case note was required before closure.")
         if missing_required:
             reason_parts.append(f"Missing required workflow steps: {', '.join(sorted(missing_required))}.")
+        if no_fetch_evidence:
+            reason_parts.append("Medium and hard cases require at least one investigation fetch before resolution.")
+        if correct and used_investigation_bonus:
+            reason_parts.append("The route also earned the investigation-use bonus.")
 
         state["resolution"] = action.resolution
         state["resolved"] = True
@@ -763,10 +784,11 @@ class FraudShieldEnvironment:
         state["policy_compliant"] = policy_compliant
         state["status"] = "resolved"
 
-        if not self._unresolved_case_ids():
+        unresolved = self._unresolved_case_ids()
+        if not unresolved:
             self.current_screen = CaseScreenEnum.QUEUE
         else:
-            self.active_case_id = self._unresolved_case_ids()[0]
+            self.active_case_id = unresolved[0]
             self.current_screen = CaseScreenEnum.QUEUE
 
         return self._apply_action_outcome(
@@ -814,12 +836,7 @@ class FraudShieldEnvironment:
             if anti_hacking:
                 state["anti_hacking_hits"] += 1
 
-        action_cost = 0.02 if action.action_type in {
-            ActionTypeEnum.FETCH_CUSTOMER_PROFILE,
-            ActionTypeEnum.FETCH_MERCHANT_PROFILE,
-            ActionTypeEnum.FETCH_NETWORK_GRAPH,
-            ActionTypeEnum.CHECK_POLICY,
-        } else 0.0
+        action_cost = 0.02 if action.action_type in FETCH_ACTIONS else 0.0
         if action.action_type == ActionTypeEnum.ADD_CASE_NOTE:
             action_cost = 0.01
 
@@ -877,40 +894,43 @@ class FraudShieldEnvironment:
         case_id = self.active_case_id or self.case_order[0]
         case = self.workflow_cases[case_id]
         state = self.case_state[case_id]
-        queue_items = [
-            QueueCaseCard(
-                case_id=workflow_case["case_id"],
-                priority=workflow_case["queue_card"]["priority"],
-                queue_reason=workflow_case["queue_card"]["queue_reason"],
-                visible_risk_band=workflow_case["queue_card"]["visible_risk_band"],
-                status=self.case_state[workflow_case["case_id"]]["status"],
-                linked_case_ids=workflow_case["linked_case_ids"],
-            )
-            for workflow_case in self.workflow_cases.values()
-        ]
+        is_triage_only = not state["reviewed"] and self.step_count == 0
+
         case_summary = CaseSummary(
             case_id=case_id,
             status=state["status"],
             queue_reason=case["queue_card"]["queue_reason"],
-            visible_risk_band=case["queue_card"]["visible_risk_band"],
+            visible_risk_band="review",
             amount_usd=float(case["transaction"]["amount"]),
-            merchant_region=case["transaction"]["shipping_address"],
+            merchant_region="masked" if not state["reviewed"] else case["transaction"]["shipping_address"],
             evidence_collected=sorted(state["revealed_evidence"].keys()),
             note_added=state["note_count"] > 0,
         )
 
-        visible_panels = ["queue_table", "sla_banner"]
-        if self.current_screen == CaseScreenEnum.CASE_CONSOLE:
-            visible_panels.append("case_console")
-        elif self.current_screen == CaseScreenEnum.CUSTOMER_PROFILE:
-            visible_panels.append("customer_profile")
-        elif self.current_screen == CaseScreenEnum.MERCHANT_PROFILE:
-            visible_panels.append("merchant_profile")
-        elif self.current_screen == CaseScreenEnum.POLICY_ESCALATION:
-            visible_panels.append("policy_escalation")
+        visible_panels = ["triage_summary"] if is_triage_only else ["triage_summary", "evidence_panel"]
+        if state["reviewed"]:
+            visible_panels.append(self.current_screen.value.lower().replace(" ", "_"))
         visible_panels.extend(sorted(state["revealed_evidence"].keys()))
         if state["note_count"] > 0:
             visible_panels.append("case_notes")
+
+        linked_case_ids = []
+        if "network_graph" in state["revealed_evidence"]:
+            linked_case_ids = list(case["linked_case_ids"])
+
+        queue_items: List[QueueCaseCard] = []
+        if state["reviewed"]:
+            queue_items = [
+                QueueCaseCard(
+                    case_id=workflow_case["case_id"],
+                    priority=workflow_case["queue_card"]["priority"],
+                    queue_reason=workflow_case["queue_card"]["queue_reason"],
+                    visible_risk_band="review",
+                    status=self.case_state[workflow_case["case_id"]]["status"],
+                    linked_case_ids=[],
+                )
+                for workflow_case in self.workflow_cases.values()
+            ]
 
         return FraudCheckObservation(
             case_id=case_id,
@@ -918,7 +938,7 @@ class FraudShieldEnvironment:
             current_screen=self.current_screen,
             visible_panels=visible_panels,
             revealed_evidence=copy.deepcopy(state["revealed_evidence"]),
-            linked_case_ids=list(case["linked_case_ids"]),
+            linked_case_ids=linked_case_ids,
             remaining_steps=self._remaining_steps(),
             remaining_sla=self._remaining_sla(),
             note_required=state["note_count"] == 0,
@@ -927,9 +947,11 @@ class FraudShieldEnvironment:
             case_summary=case_summary,
             episode_step=self.step_count,
             app_context={
+                "item_category": case["transaction"]["item_category"],
+                "timestamp": case["transaction"]["timestamp"],
+                "investigation_budget_remaining": state["fetch_budget_remaining"],
+                "available_investigations": sorted(action.value for action in FETCH_ACTIONS),
                 "task_description": TASK_CONFIG[self.current_task]["description"],
-                "policy_required": case["policy_required"],
-                "linked_workflow": bool(case["linked_case_ids"]),
             },
         )
 
@@ -944,7 +966,7 @@ class FraudShieldEnvironment:
         if not state["reviewed"]:
             return [ActionTypeEnum.REVIEW_TRANSACTION]
 
-        actions = [
+        return [
             ActionTypeEnum.REVIEW_TRANSACTION,
             ActionTypeEnum.FETCH_CUSTOMER_PROFILE,
             ActionTypeEnum.FETCH_MERCHANT_PROFILE,
@@ -953,7 +975,6 @@ class FraudShieldEnvironment:
             ActionTypeEnum.ADD_CASE_NOTE,
             ActionTypeEnum.RESOLVE_CASE,
         ]
-        return actions
 
     def _remaining_steps(self) -> int:
         return max(0, self.max_steps[self.current_task] - self.step_count)

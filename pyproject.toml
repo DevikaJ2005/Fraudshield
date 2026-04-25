@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fraudshield"
-version = "0.4.0"
-description = "Enterprise FraudOps OpenEnv environment for multi-app case investigation, policy-aware routing, and reproducible workflow evaluation."
+version = "0.6.0"
+description = "Partial-observability OpenEnv environment for simulated fraud investigation and workflow-aware routing."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -15,8 +15,8 @@ authors = [
 keywords = [
     "openenv",
     "reinforcement-learning",
-    "fraudops",
-    "enterprise-workflow",
+    "fraud-investigation",
+    "world-modeling",
     "agent-evaluation",
     "trust-and-safety",
     "environment",
@@ -74,6 +74,7 @@ py-modules = [
     "inference",
     "inference_llm",
     "llm_agent",
+    "llm_agent_openai",
     "models",
 ]
 

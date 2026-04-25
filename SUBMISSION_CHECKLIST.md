@@ -1,63 +1,77 @@
 # FraudShield Submission Checklist
 
-Updated: 2026-04-08
+Updated: 2026-04-25
 
-## Core submission requirements
+## Submission links
+
+- [x] Hugging Face Space: `https://huggingface.co/spaces/DevikaJ2005/fraudshield-1`
+- [x] GitHub repository: `https://github.com/DevikaJ2005/Fraudshield`
+- [x] Colab notebook path committed: `notebooks/fraudshield_trl_colab.ipynb`
+- [ ] Public Colab run verified end to end after GPU training
+- [ ] Final Hugging Face blog post URL or video/slides URL added to `README.md`
+
+## OpenEnv environment requirements
 
 - [x] `openenv.yaml` present and aligned with the current environment
-- [x] Root `inference.py` runs successfully
-- [x] `inference.py` emits `[START]`, `[STEP]`, and `[END]` blocks to stdout
-- [x] Inference uses injected `API_BASE_URL` and `API_KEY` when provided
-- [x] Task scores stay strictly inside `(0, 1)`
+- [x] OpenEnv API endpoints implemented:
+  - `/health`
+  - `/reset`
+  - `/step`
+  - `/state`
+  - `/info`
+  - `/tasks`
+  - `/metadata`
+  - `/schema`
+  - `/mcp`
+- [x] Typed action, observation, reward, reset, step, and state models
 - [x] Frozen snapshot committed in `data/fraudshield_cases.json`
-- [x] Dockerfile included
-- [x] FastAPI runtime listens on port `7860`
-
-## Environment quality
-
-- [x] Typed Pydantic action, observation, reward, state, reset, and step models
 - [x] Three graded tasks: easy, medium, hard
-- [x] Deterministic graders and fixed seed
-- [x] Business-cost-sensitive reward shaping
-- [x] Optional multi-step investigation workflow
-- [x] Partial observability via budgeted evidence reveals
+- [x] Partial observability with progressive evidence reveals
+- [x] Investigation budget per case
+- [x] Workflow-shaped reward design
+- [x] Lightweight browser explorer at `/` for manual inspection
 
-## Runtime surface
-
-- [x] `GET /health`
-- [x] `POST /reset`
-- [x] `POST /step`
-- [x] `GET /state`
-- [x] `GET /info`
-- [x] `GET /tasks`
-- [x] `GET /metadata`
-- [x] `GET /schema`
-- [x] `POST /mcp`
-
-## Local validations completed
+## Local validation status
 
 - [x] `python inference.py`
-- [x] `python -X utf8 validate_enhancements.py`
-- [x] `python -X utf8 validate_api.py`
+- [x] `python validate_api.py`
 - [x] `python -m openenv.cli validate .`
-- [x] `python -m openenv.cli validate --url http://127.0.0.1:7860`
+- [ ] `python -m openenv.cli validate --url http://127.0.0.1:7860`
+  - local browser health checks passed, but the validator still timed out against the subprocess-hosted server on this machine
+- [ ] `docker build -t fraudshield .`
+  - blocked by the local Docker Desktop / WSL engine state, not by the project code
 
 ## Current baseline
 
-- [x] Easy: `0.9999`
-- [x] Medium: `0.9996`
-- [x] Hard: `0.9983`
-- [x] Overall: `0.9993`
+Heuristic baseline (rule-based, not trained):
 
-## Submission URLs
+- [x] Easy: `0.9900`
+- [x] Medium: `0.3500`
+- [x] Hard: `0.7425`
+- [x] Final: `0.6942`
 
-- GitHub: `https://github.com/DevikaJ2005/Fraudshield`
-- Hugging Face Space: `https://huggingface.co/spaces/DevikaJ2005/fraudshield-1`
+## Training deliverables
 
-## Presentation strengths
+- [x] RL training notebook scaffold committed
+- [x] Notebook structured for Colab + GPU workflow
+- [x] Notebook supports `LOCAL_MODEL_PATH` evaluation after training
+- [ ] Real Colab training run completed
+- [ ] `reward_curve.png` committed
+- [ ] `loss_curve.png` committed
+- [ ] `training_summary.json` updated with trained results
+- [ ] README results section updated with trained-vs-heuristic comparison
 
-- [x] Real-world marketplace fraud use case
-- [x] Clear agentic loop instead of pure one-shot classification
-- [x] Strong deterministic submission path for validator reliability
-- [x] Richer demo path through `agentic_demo.py`
-- [x] REST and MCP access patterns for tooling and judge exploration
+## Presentation deliverables
+
+- [x] README rewritten around the RL environment story
+- [x] `HF_BLOG_DRAFT.md` present
+- [x] Deployment guide present
+- [ ] Final blog published on Hugging Face
+- [ ] Final screenshots captured from the explorer UI and/or API walkthrough
+
+## What is still needed from you
+
+- [ ] Run the Colab notebook with a GPU runtime
+- [ ] Add your Hugging Face token inside Colab so trained artifacts can be saved if you want
+- [ ] Publish the final blog or video/slides link
+- [ ] Share Space build logs with me if the HF deployment needs one more cleanup pass
