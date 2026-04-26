@@ -160,12 +160,13 @@ def main() -> Dict[str, object]:
     configured_agent_name = getattr(agent, "name", agent.__class__.__name__)
     configured_agent_type = getattr(agent, "agent_type", "unknown")
     logger.info(
-        "Configured agent: %s (%s) | API_BASE_URL=%s | MODEL_NAME=%s | LOCAL_MODEL_PATH=%s",
+        "Configured agent: %s (%s) | API_BASE_URL=%s | MODEL_NAME=%s | LOCAL_MODEL_PATH=%s | HF_TOKEN=%s",
         configured_agent_name,
         configured_agent_type,
         get_env("API_BASE_URL", default="<default>"),
         get_env("MODEL_NAME", default="<unset>"),
         get_env("LOCAL_MODEL_PATH", default="<unset>"),
+        "<set>" if get_env("HF_TOKEN", "HUGGINGFACEHUB_API_TOKEN") else "<unset>",
     )
 
     easy_summary, agent, easy_trace, easy_decisions, easy_fallback = run_task(env, agent, fallback_agent, "easy")
@@ -184,6 +185,7 @@ def main() -> Dict[str, object]:
         "api_base_url": get_env("API_BASE_URL"),
         "model_name": get_env("MODEL_NAME", default="gpt-4o-mini"),
         "local_model_path": get_env("LOCAL_MODEL_PATH"),
+        "hf_token_present": bool(get_env("HF_TOKEN", "HUGGINGFACEHUB_API_TOKEN")),
         "seed": 42,
         "data_snapshot": env.data_loader.get_bundle_summary(),
         "task_steps": {

@@ -212,9 +212,16 @@ def build_default_agent() -> object:
 
     heuristic = SnapshotCalibratedFraudDetectionAgent()
     local_model_path = get_env("LOCAL_MODEL_PATH")
-    model_name = get_env("MODEL_NAME", default="gpt-4o-mini")
-    api_key = get_env("API_KEY", "OPENAI_API_KEY")
-    api_base_url = get_env("API_BASE_URL")
+    hf_token = get_env("HF_TOKEN", "HUGGINGFACEHUB_API_TOKEN")
+    api_key = get_env("API_KEY", "OPENAI_API_KEY", default=hf_token)
+    model_name = get_env(
+        "MODEL_NAME",
+        default="Qwen/Qwen2.5-1.5B-Instruct" if hf_token and not local_model_path else "gpt-4o-mini",
+    )
+    api_base_url = get_env(
+        "API_BASE_URL",
+        default="https://router.huggingface.co/v1" if hf_token and not local_model_path else None,
+    )
 
     if local_model_path:
         from llm_agent_openai import LocalModelFraudDetectionAgent
