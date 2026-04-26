@@ -13,6 +13,22 @@ license: mit
 
 FraudShield is a partial-observability OpenEnv environment for simulated fraud investigation and workflow-aware routing.
 
+## Training-First Architecture
+
+FraudShield now includes a modular LLM + RL training stack alongside the OpenEnv runtime:
+
+- `environment.py`: text-first wrapper for multi-step rollouts
+- `reward.py`: decomposed numeric reward with measurable subscores
+- `train.py`: Colab-friendly QLoRA training pipeline
+- `evaluate.py`: fixed-task evaluation and comparison plots
+- `config.py`: experiment, model, environment, and reward configuration
+- `utils.py`: seeding, JSON handling, logging helpers, and moving averages
+- `configs/colab_qlora_grpo.json`: default Colab experiment config
+
+This layer is designed so you can generate rollouts, score model behavior with decomposed rewards, save checkpoints, resume runs, and compare before/after performance in a repeatable way.
+
+Experimental tracking is enabled by default through TensorBoard logs under `artifacts/rl_runs/.../tb_logs`, and the training pipeline also writes plot artifacts such as `loss_vs_steps.png` and `reward_vs_steps.png`. If you want hosted tracking, set `report_to=["wandb"]` or `["tensorboard","wandb"]` in the experiment config before the run.
+
 ## What This Is
 
 FraudShield is an RL-ready simulation, not a live fraud platform. An agent receives a limited triage view of a case, chooses investigation actions to reveal hidden evidence, and then routes the case with one of the supported final resolutions.

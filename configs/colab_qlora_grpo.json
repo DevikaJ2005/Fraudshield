@@ -1,0 +1,72 @@
+{
+  "name": "fraudshield-colab-qlora-grpo",
+  "seed": 42,
+  "environment": {
+    "data_path": "data",
+    "default_task": "medium",
+    "max_rollout_steps": 14,
+    "seed": 42
+  },
+  "model": {
+    "base_model": "unsloth/Qwen2.5-1.5B-Instruct",
+    "load_in_4bit": true,
+    "max_seq_length": 2048,
+    "lora_rank": 16,
+    "lora_alpha": 16,
+    "lora_dropout": 0.0,
+    "gradient_checkpointing": "unsloth",
+    "mixed_precision": "auto"
+  },
+  "training": {
+    "algorithm": "grpo",
+    "warmstart_algorithm": "sft",
+    "output_dir": "artifacts/rl_runs/colab_qlora_grpo",
+    "checkpoint_dir": "artifacts/rl_runs/colab_qlora_grpo/checkpoints",
+    "save_to_drive": true,
+    "drive_dir": "/content/drive/MyDrive/fraudshield",
+    "num_train_epochs": 2,
+    "per_device_train_batch_size": 2,
+    "gradient_accumulation_steps": 4,
+    "learning_rate": 0.0001,
+    "eval_every_steps": 10,
+    "save_every_steps": 20,
+    "warmstart_rollouts_per_task": 24,
+    "rl_rollouts_per_task": 8,
+    "max_prompt_tokens": 2048,
+    "max_completion_tokens": 220,
+    "logging_steps": 1,
+    "report_to": [
+      "tensorboard"
+    ],
+    "run_name": "fraudshield-colab-run",
+    "resume_from_checkpoint": null,
+    "public_curriculum_dataset": "Phoenix21/mock_fraud-detection-dataset",
+    "public_curriculum_rows": 2500
+  },
+  "evaluation": {
+    "tasks": [
+      "easy",
+      "medium",
+      "hard"
+    ],
+    "fixed_prompt_cases": 3,
+    "plots_dir": "artifacts/plots",
+    "compare_against_base_model": true
+  },
+  "reward_weights": {
+    "env_reward": 1.0,
+    "correctness": 0.35,
+    "task_completion": 0.2,
+    "reasoning_quality": 0.1,
+    "efficiency": 0.1,
+    "safety": 0.1,
+    "formatting_compliance": 0.1,
+    "consistency": 0.05
+  },
+  "reward_version": "v1",
+  "ablation_tags": [
+    "public-curriculum",
+    "two-stage",
+    "colab-qlora"
+  ]
+}

@@ -36,6 +36,7 @@ classifiers = [
 ]
 dependencies = [
     "fastapi>=0.115.0",
+    "matplotlib>=3.8.0",
     "numpy>=1.24.0",
     "openai>=1.40.0",
     "openenv-core>=0.2.0",
@@ -55,6 +56,16 @@ dev = [
     "pytest>=7.4.0",
     "ruff>=0.4.0",
 ]
+rl = [
+    "accelerate>=0.33.0",
+    "bitsandbytes>=0.43.0",
+    "datasets>=2.20.0",
+    "peft>=0.12.0",
+    "tensorboard>=2.17.0",
+    "transformers>=4.51.0",
+    "trl>=0.19.0",
+    "wandb>=0.17.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/DevikaJ2005/fraudshield"
@@ -64,11 +75,15 @@ BugTracker = "https://github.com/DevikaJ2005/fraudshield/issues"
 
 [project.scripts]
 server = "server.app:main"
+fraudshield-train = "train:main"
+fraudshield-evaluate = "evaluate:main"
 
 [tool.setuptools]
 py-modules = [
     "data_loader",
     "download_kaggle_data",
+    "environment",
+    "evaluate",
     "fraudshield_env",
     "graders",
     "inference",
@@ -76,6 +91,10 @@ py-modules = [
     "llm_agent",
     "llm_agent_openai",
     "models",
+    "reward",
+    "train",
+    "utils",
+    "config",
 ]
 
 [tool.setuptools.packages.find]
