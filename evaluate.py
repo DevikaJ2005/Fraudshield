@@ -4,76 +4,119 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
 
 from config import ExperimentConfig
-from environment import FraudShieldTextEnvironment
-from llm_agent import build_default_agent
 from utils import ensure_dir, moving_average, save_json, seed_everything
 
 
+def _run_inference(extra_env: dict[str, str] | None = None) -> dict[str, Any]:
+    """Run ``inference.py`` with a controlled environment and return its report."""
+
+    env_vars = os.environ.copy()
+    for key in ("HF_TOKEN", "HUGGINGFACEHUB_API_TOKEN", "API_KEY", "OPENAI_API_KEY", "API_BASE_URL", "MODEL_NAME", "LOCAL_MODEL_PATH"):
+        env_vars.pop(key, None)
+    if extra_env:
+        env_vars.update(extra_env)
+    subprocess.run(
+        ["python", "inference.py"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env_vars,
+    )
+    with open("fraudshield_baseline_results.json", "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
 def evaluate_agent(config: ExperimentConfig) -> dict[str, Any]:
-    """Run fixed-task evaluations and collect comparison metrics."""
+    """Compare heuristic baseline against the trained local checkpoint."""
 
     seed_everything(config.seed)
-    text_env = FraudShieldTextEnvironment(config.environment, config.reward_weights)
-    agent = build_default_agent()
-    task_rows = []
-    reward_traces: dict[str, list[float]] = {}
+    trained_model_path = str(Path(config.training.output_dir) / "trained_policy")
+
+    baseline_results = _run_inference()
+    trained_results = _run_inference({"LOCAL_MODEL_PATH": trained_model_path})
+
+    comparison_rows = []
+    win_count = 0
     for task in config.evaluation.tasks:
-        prompt = text_env.reset(task=task)
-        done = False
-        rewards: list[float] = []
-        final_info: dict[str, Any] | None = None
-        while not done:
-            action = agent.decide(text_env.current_observation)
-            response_text = json.dumps(
-                {
-                    "action_type": "decide" if action.action_type.value == "resolve_case" else "investigate",
-                    "investigation_target": action.action_type.value,
-                    "decision": "fraud" if getattr(action, "resolution", None) and action.resolution.value in {"block", "hold", "escalate"} else "legitimate",
-                    "confidence": 0.8,
-                    "reasoning": action.reasoning or "Evaluation rollout step.",
-                }
-            )
-            step = text_env.step(response_text)
-            prompt = step.next_prompt
-            done = step.done
-            rewards.append(step.reward)
-            final_info = step.info
-        reward_traces[task] = rewards
-        state = final_info["state"] if final_info else {}
-        env_reward = final_info["env_reward"] if final_info else {}
-        task_rows.append(
+        baseline_score = float(baseline_results[task]["score"])
+        trained_score = float(trained_results[task]["score"])
+        if trained_score > baseline_score:
+            win_count += 1
+        comparison_rows.append(
             {
                 "task": task,
-                "total_reward": round(sum(rewards), 4),
-                "mean_reward": round(sum(rewards) / max(1, len(rewards)), 4),
-                "success_rate": 1.0 if env_reward.get("is_correct") else 0.0,
-                "resolved_cases": len(state.get("resolved_case_ids", [])),
-                "token_usage_estimate": sum(len(str(value)) for value in rewards),
+                "baseline_score": baseline_score,
+                "trained_score": trained_score,
+                "delta": trained_score - baseline_score,
             }
         )
-    return {"tasks": task_rows, "reward_traces": reward_traces}
+
+    return {
+        "baseline": {
+            "easy": baseline_results["easy"]["score"],
+            "medium": baseline_results["medium"]["score"],
+            "hard": baseline_results["hard"]["score"],
+            "final_score": baseline_results["final_score"],
+            "agent_metadata": baseline_results.get("metadata", {}),
+        },
+        "trained": {
+            "easy": trained_results["easy"]["score"],
+            "medium": trained_results["medium"]["score"],
+            "hard": trained_results["hard"]["score"],
+            "final_score": trained_results["final_score"],
+            "agent_metadata": trained_results.get("metadata", {}),
+            "local_model_path": trained_model_path,
+        },
+        "comparison": comparison_rows,
+        "success_rate": win_count / max(1, len(config.evaluation.tasks)),
+        "preference_score": trained_results["final_score"] - baseline_results["final_score"],
+        "before_after": {
+            "base_model_final": baseline_results["final_score"],
+            "trained_model_final": trained_results["final_score"],
+        },
+    }
 
 
 def save_evaluation_artifacts(report: dict[str, Any], config: ExperimentConfig) -> None:
     """Persist evaluation metrics and plots."""
 
     plots_dir = ensure_dir(config.evaluation.plots_dir)
-    rewards = [row["total_reward"] for row in report["tasks"]]
-    moving = moving_average(rewards, window=2)
+
+    baseline_scores = [row["baseline_score"] for row in report["comparison"]]
+    trained_scores = [row["trained_score"] for row in report["comparison"]]
+    deltas = [row["delta"] for row in report["comparison"]]
+    labels = [row["task"] for row in report["comparison"]]
+
     plt.figure(figsize=(8, 4))
-    plt.plot(range(1, len(rewards) + 1), rewards, marker="o", label="reward")
-    plt.plot(range(1, len(moving) + 1), moving, marker="x", label="moving_avg_reward")
-    plt.xticks(range(1, len(rewards) + 1), [row["task"] for row in report["tasks"]])
+    plt.plot(range(1, len(baseline_scores) + 1), baseline_scores, marker="o", label="baseline")
+    plt.plot(range(1, len(trained_scores) + 1), trained_scores, marker="o", label="trained")
+    plt.xticks(range(1, len(labels) + 1), labels)
+    plt.ylabel("task score")
+    plt.title("FraudShield before vs after")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(plots_dir / "before_after_scores.png")
+    plt.close()
+
+    plt.figure(figsize=(8, 4))
+    plt.plot(range(1, len(deltas) + 1), deltas, marker="o", label="score_delta")
+    plt.plot(range(1, len(deltas) + 1), moving_average(deltas, window=2), marker="x", label="moving_avg_delta")
+    plt.xticks(range(1, len(labels) + 1), labels)
+    plt.ylabel("score delta")
+    plt.title("FraudShield score improvement by task")
     plt.legend()
     plt.tight_layout()
     plt.savefig(plots_dir / "evaluation_rewards.png")
     plt.close()
+
     save_json(report, Path(config.training.output_dir) / "evaluation_report.json")
 
 
