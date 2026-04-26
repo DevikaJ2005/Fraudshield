@@ -24,13 +24,13 @@
     "checkpoint_dir": "artifacts/rl_runs/colab_qlora_grpo/checkpoints",
     "save_to_drive": true,
     "drive_dir": "/content/drive/MyDrive/fraudshield",
-    "num_train_epochs": 2,
+    "num_train_epochs": 3,
     "per_device_train_batch_size": 2,
     "gradient_accumulation_steps": 4,
-    "learning_rate": 0.0001,
+    "learning_rate": 5e-05,
     "eval_every_steps": 10,
     "save_every_steps": 20,
-    "warmstart_rollouts_per_task": 24,
+    "warmstart_rollouts_per_task": 60,
     "rl_rollouts_per_task": 8,
     "max_prompt_tokens": 2048,
     "max_completion_tokens": 220,
@@ -41,7 +41,7 @@
     "run_name": "fraudshield-colab-run",
     "resume_from_checkpoint": null,
     "public_curriculum_dataset": "Phoenix21/mock_fraud-detection-dataset",
-    "public_curriculum_rows": 2500
+    "public_curriculum_rows": 500
   },
   "evaluation": {
     "tasks": [

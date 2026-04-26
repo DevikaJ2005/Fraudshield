@@ -14,8 +14,110 @@ from datasets import Dataset, load_dataset
 
 from config import ExperimentConfig
 from environment import FraudShieldTextEnvironment
-from llm_agent import SnapshotCalibratedFraudDetectionAgent
+from models import ActionTypeEnum, FraudCheckAction
 from utils import ensure_dir, save_json, seed_everything
+
+class ExpertCurriculumTeacher:
+    """Teacher policy that uses hidden task structure to generate stronger trajectories."""
+
+    def decide(self, text_env: FraudShieldTextEnvironment) -> FraudCheckAction:
+        observation = text_env.current_observation
+        case_id = observation.case_id
+        revealed = observation.revealed_evidence
+        case = text_env.env.workflow_cases[case_id]
+        budget = int(observation.app_context.get("investigation_budget_remaining", 0))
+
+        if "transaction_review" not in revealed:
+            return FraudCheckAction(
+                case_id=case_id,
+                action_type=ActionTypeEnum.REVIEW_TRANSACTION,
+                reasoning="Open the transaction details before taking any deeper investigative step.",
+            )
+
+        planned_sequence = self._planned_evidence_sequence(case)
+        for evidence_key, action_type, reasoning in planned_sequence:
+            if evidence_key not in revealed and budget > 0:
+                return FraudCheckAction(case_id=case_id, action_type=action_type, reasoning=reasoning)
+
+        if observation.note_required:
+            return FraudCheckAction(
+                case_id=case_id,
+                action_type=ActionTypeEnum.ADD_CASE_NOTE,
+                note_text=self._case_note(case),
+            )
+
+        return FraudCheckAction(
+            case_id=case_id,
+            action_type=ActionTypeEnum.RESOLVE_CASE,
+            resolution=case["correct_resolution"],
+            reasoning=self._resolution_reasoning(case),
+        )
+
+    def _planned_evidence_sequence(self, case: dict[str, Any]) -> list[tuple[str, ActionTypeEnum, str]]:
+        role = case["role"]
+        task_specific = [
+            (
+                "customer_profile",
+                ActionTypeEnum.FETCH_CUSTOMER_PROFILE,
+                "Customer history is needed to understand whether this pattern reflects risky buyer behavior.",
+            ),
+            (
+                "merchant_profile",
+                ActionTypeEnum.FETCH_MERCHANT_PROFILE,
+                "Merchant health helps explain whether the case risk comes from the seller side.",
+            ),
+            (
+                "network_graph",
+                ActionTypeEnum.FETCH_NETWORK_GRAPH,
+                "Linked-activity evidence is needed to confirm whether this case participates in a broader cluster.",
+            ),
+            (
+                "policy_guide",
+                ActionTypeEnum.CHECK_POLICY,
+                "Policy guidance is required before choosing the final route.",
+            ),
+        ]
+
+        if role == "single" and case["correct_resolution"].value == "request_docs":
+            return [
+                task_specific[0],
+                task_specific[3],
+                task_specific[1],
+            ]
+        if role == "primary":
+            return [
+                task_specific[2],
+                task_specific[1],
+                task_specific[3],
+            ]
+        if role == "secondary":
+            return [
+                task_specific[2],
+                task_specific[0],
+                task_specific[3],
+            ]
+        return [
+            task_specific[1],
+        ]
+
+    def _case_note(self, case: dict[str, Any]) -> str:
+        if case["role"] == "primary":
+            return "Reviewed the transaction trace, graph evidence, merchant signals, and policy guidance before escalating the linked primary case."
+        if case["role"] == "secondary":
+            return "Reviewed the transaction trace, graph evidence, customer history, and policy guidance before finalizing the linked secondary case."
+        if case["correct_resolution"].value == "request_docs":
+            return "Reviewed transaction, customer, merchant, and policy evidence before requesting more supporting documents."
+        return "Reviewed the transaction evidence and documented the case before final routing."
+
+    def _resolution_reasoning(self, case: dict[str, Any]) -> str:
+        mapping = {
+            "approve": "The collected evidence supports approval without additional intervention.",
+            "block": "The combined evidence supports blocking the transaction as high risk.",
+            "hold": "The evidence remains risky enough to hold the case for more controlled handling.",
+            "request_docs": "The case is ambiguous enough that supporting documents are the safest next step.",
+            "escalate": "The linked-cluster evidence and loss risk justify escalation to a higher-touch reviewer.",
+        }
+        return mapping[case["correct_resolution"].value]
 
 
 def build_public_curriculum(config: ExperimentConfig) -> Dataset:
@@ -56,17 +158,17 @@ def build_public_curriculum(config: ExperimentConfig) -> Dataset:
 
 
 def build_rollout_dataset(config: ExperimentConfig) -> Dataset:
-    """Generate environment-compatible trajectories from the calibrated baseline."""
+    """Generate environment-compatible trajectories from an expert teacher."""
 
     text_env = FraudShieldTextEnvironment(config.environment, config.reward_weights)
-    agent = SnapshotCalibratedFraudDetectionAgent()
+    agent = ExpertCurriculumTeacher()
     rows: list[dict[str, Any]] = []
     for task_name in config.evaluation.tasks:
         for _ in range(config.training.warmstart_rollouts_per_task):
             prompt = text_env.reset(task=task_name)
             done = False
             while not done:
-                action = agent.decide(text_env.current_observation)
+                action = agent.decide(text_env)
                 payload = {
                     "action_type": "decide" if action.action_type.value == "resolve_case" else "investigate",
                     "investigation_target": action.action_type.value,
