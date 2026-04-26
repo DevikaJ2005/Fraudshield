@@ -122,6 +122,31 @@ Run the heuristic or configured agent:
 python inference.py
 ```
 
+FraudShield supports three agent modes:
+
+- `heuristic` by default when no model credentials are set
+- `llm_local` when `LOCAL_MODEL_PATH` points to a trained Hugging Face / PEFT checkpoint
+- `llm_remote` when an API-compatible model is configured
+
+For a no-paid-model open-source setup, the recommended options are:
+
+### Option 1: Use your locally trained model
+
+```bash
+LOCAL_MODEL_PATH=trained_policy python inference.py
+```
+
+### Option 2: Use a Hugging Face hosted open-source model
+
+```bash
+HF_TOKEN=your_token_here \
+MODEL_NAME=Qwen/Qwen2.5-1.5B-Instruct \
+API_BASE_URL=https://router.huggingface.co/v1 \
+python inference.py
+```
+
+If `HF_TOKEN` is present and `API_BASE_URL` is not set, FraudShield defaults to the Hugging Face router automatically.
+
 Run the OpenEnv API server:
 
 ```bash
@@ -164,9 +189,12 @@ It is designed to:
 
 1. install `openenv-core`, `trl`, `unsloth`, `transformers`, `datasets`, and `peft`
 2. clone the repo and install FraudShield
-3. wrap `FraudShieldEnvironment` for GRPO-style training
-4. combine environment reward with a JSON-format reward
-5. train easy -> medium -> hard
+3. load a public fraud curriculum dataset from Hugging Face
+4. build a second-stage training set from real FraudShield rollouts
+5. run two-stage fine-tuning with Unsloth LoRA and TRL `SFTTrainer`
+   - stage 1: public fraud-data adaptation
+   - stage 2: FraudShield policy adaptation
+5. save a reusable local policy checkpoint
 6. save:
    - `reward_curve.png`
    - `loss_curve.png`
@@ -175,7 +203,7 @@ It is designed to:
    - heuristic via `python inference.py`
    - trained model via `LOCAL_MODEL_PATH=... python inference.py`
 
-At the moment the notebook is wired for this flow, but the real training run still depends on available compute credits.
+The notebook is designed for Colab + GPU execution and does not require a paid proprietary LLM. The current public curriculum source is `Phoenix21/mock_fraud-detection-dataset`, which gives the model broader fraud-signal exposure before it is adapted to FraudShield actions.
 
 ## Results
 
@@ -186,7 +214,7 @@ Current heuristic baseline, measured with `python inference.py`:
 - Hard: `0.7425`
 - Final: `0.6942`
 
-This baseline is intentionally rule-based and not trained. It is strong on easy, weaker on medium, and still imperfect on hard, which leaves headroom for the training run.
+This baseline is intentionally rule-based and not trained. It is strong on easy, weaker on medium, and still imperfect on hard, which leaves headroom for a trained policy that can learn broader fraud patterns from public data and then adapt them to FraudShield.
 
 Once training is completed, this section should include:
 
@@ -194,6 +222,12 @@ Once training is completed, this section should include:
 - loss curve image
 - trained-vs-heuristic comparison table
 - one short qualitative trace comparison
+
+The preferred final story is:
+
+- heuristic baseline
+- base open-source LLM or hosted HF model
+- fine-tuned local policy checkpoint
 
 ## Live Links
 

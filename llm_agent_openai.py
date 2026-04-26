@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -15,6 +16,38 @@ except ImportError:  # pragma: no cover
     OpenAI = None
 
 logger = logging.getLogger(__name__)
+
+ACTION_ALIAS_TO_ENUM = {
+    "merchant_profile": ActionTypeEnum.FETCH_MERCHANT_PROFILE,
+    "fetch_merchant_profile": ActionTypeEnum.FETCH_MERCHANT_PROFILE,
+    "customer_profile": ActionTypeEnum.FETCH_CUSTOMER_PROFILE,
+    "fetch_customer_profile": ActionTypeEnum.FETCH_CUSTOMER_PROFILE,
+    "network_graph": ActionTypeEnum.FETCH_NETWORK_GRAPH,
+    "fetch_network_graph": ActionTypeEnum.FETCH_NETWORK_GRAPH,
+    "device_intel": ActionTypeEnum.FETCH_NETWORK_GRAPH,
+    "payment_trace": ActionTypeEnum.REVIEW_TRANSACTION,
+    "fulfillment_review": ActionTypeEnum.REVIEW_TRANSACTION,
+    "review_transaction": ActionTypeEnum.REVIEW_TRANSACTION,
+    "policy_review": ActionTypeEnum.CHECK_POLICY,
+    "check_policy": ActionTypeEnum.CHECK_POLICY,
+    "trust_notes": ActionTypeEnum.CHECK_POLICY,
+}
+
+ACTION_ENUM_TO_ALIAS = {
+    ActionTypeEnum.REVIEW_TRANSACTION: "payment_trace",
+    ActionTypeEnum.FETCH_CUSTOMER_PROFILE: "customer_profile",
+    ActionTypeEnum.FETCH_MERCHANT_PROFILE: "merchant_profile",
+    ActionTypeEnum.FETCH_NETWORK_GRAPH: "network_graph",
+    ActionTypeEnum.CHECK_POLICY: "policy_review",
+}
+
+ACTION_ENUM_TO_EVIDENCE_KEY = {
+    ActionTypeEnum.REVIEW_TRANSACTION: "transaction_review",
+    ActionTypeEnum.FETCH_CUSTOMER_PROFILE: "customer_profile",
+    ActionTypeEnum.FETCH_MERCHANT_PROFILE: "merchant_profile",
+    ActionTypeEnum.FETCH_NETWORK_GRAPH: "network_graph",
+    ActionTypeEnum.CHECK_POLICY: "policy_guide",
+}
 
 
 class LLMFraudDetectionAgent:
@@ -61,6 +94,7 @@ class LLMFraudDetectionAgent:
             return self._fallback(observation, exc)
 
     def _build_messages(self, observation) -> list[Dict[str, str]]:
+        available_aliases = self._available_investigation_aliases(observation)
         observation_payload = {
             "case_id": observation.case_id,
             "task_name": observation.task_name.value,
@@ -73,21 +107,15 @@ class LLMFraudDetectionAgent:
             "remaining_sla": observation.remaining_sla,
             "note_required": observation.note_required,
             "allowed_public_actions": [action.value for action in observation.allowed_actions],
-            "available_investigation_aliases": [
-                "merchant_profile",
-                "customer_profile",
-                "network_graph",
-                "device_intel",
-                "payment_trace",
-                "fulfillment_review",
-                "policy_review",
-            ],
+            "available_investigation_aliases": available_aliases,
             "app_context": observation.app_context,
         }
         system_prompt = (
             "You are a fraud analyst operating inside a simulated investigation workflow. "
             "Only use the visible evidence shown to you. Choose either one investigation alias or one final "
-            "decision. Respond with JSON only using this schema: "
+            "decision. For investigation_target, you must return exactly one alias from "
+            f"{available_aliases}. Never return placeholders, array expressions, or prose such as "
+            "'available_investigations[0]'. Respond with JSON only using this schema: "
             '{"action_type":"investigate|decide","investigation_target":"string|null",'
             '"decision":"fraud|legitimate|null","confidence":0.0,"reasoning":"one sentence"}'
         )
@@ -101,7 +129,8 @@ class LLMFraudDetectionAgent:
         reasoning = self._normalize_reasoning(payload.get("reasoning"))
         if action_type == "investigate":
             investigation_target = str(payload.get("investigation_target", "")).strip().lower()
-            mapped_action = self._map_investigation_alias(investigation_target)
+            mapped_action = self._map_investigation_alias(investigation_target, observation)
+            mapped_action = self._stabilize_investigation_choice(mapped_action, observation)
             return FraudCheckAction(
                 case_id=observation.case_id,
                 action_type=mapped_action,
@@ -128,20 +157,71 @@ class LLMFraudDetectionAgent:
 
         raise ValueError(f"Unsupported action_type from model: {action_type!r}")
 
-    def _map_investigation_alias(self, alias: str) -> ActionTypeEnum:
-        mapping = {
-            "merchant_profile": ActionTypeEnum.FETCH_MERCHANT_PROFILE,
-            "customer_profile": ActionTypeEnum.FETCH_CUSTOMER_PROFILE,
-            "network_graph": ActionTypeEnum.FETCH_NETWORK_GRAPH,
-            "device_intel": ActionTypeEnum.FETCH_NETWORK_GRAPH,
-            "payment_trace": ActionTypeEnum.REVIEW_TRANSACTION,
-            "fulfillment_review": ActionTypeEnum.REVIEW_TRANSACTION,
-            "policy_review": ActionTypeEnum.CHECK_POLICY,
-            "trust_notes": ActionTypeEnum.CHECK_POLICY,
-        }
-        if alias not in mapping:
-            raise ValueError(f"Unsupported investigation_target from model: {alias!r}")
-        return mapping[alias]
+    def _map_investigation_alias(self, alias: str, observation) -> ActionTypeEnum:
+        normalized = alias.strip().lower()
+        if normalized in ACTION_ALIAS_TO_ENUM:
+            return ACTION_ALIAS_TO_ENUM[normalized]
+
+        placeholder_match = re.fullmatch(r"available_investigations\[(\d+)\]", normalized)
+        if placeholder_match:
+            index = int(placeholder_match.group(1))
+            available = self._available_investigation_aliases(observation)
+            if 0 <= index < len(available):
+                return ACTION_ALIAS_TO_ENUM[available[index]]
+
+        compact = re.sub(r"[^a-z_]", "", normalized.replace("-", "_").replace(" ", "_"))
+        for key, value in ACTION_ALIAS_TO_ENUM.items():
+            if compact == key:
+                return value
+        for key, value in ACTION_ALIAS_TO_ENUM.items():
+            if compact and compact in key:
+                return value
+
+        available = self._available_investigation_aliases(observation)
+        if len(available) == 1:
+            return ACTION_ALIAS_TO_ENUM[available[0]]
+        raise ValueError(f"Unsupported investigation_target from model: {alias!r}")
+
+    def _available_investigation_aliases(self, observation) -> list[str]:
+        context_aliases = observation.app_context.get("available_investigations")
+        aliases: list[str] = []
+        if isinstance(context_aliases, list):
+            for alias in context_aliases:
+                normalized = str(alias).strip().lower()
+                if normalized in ACTION_ALIAS_TO_ENUM:
+                    canonical = ACTION_ENUM_TO_ALIAS[ACTION_ALIAS_TO_ENUM[normalized]]
+                    if canonical not in aliases:
+                        aliases.append(canonical)
+
+        if aliases:
+            return aliases
+
+        fallback_aliases: list[str] = []
+        for action in observation.allowed_actions:
+            if action in ACTION_ENUM_TO_ALIAS:
+                alias = ACTION_ENUM_TO_ALIAS[action]
+                if alias not in fallback_aliases:
+                    fallback_aliases.append(alias)
+        return fallback_aliases
+
+    def _stabilize_investigation_choice(self, action_type: ActionTypeEnum, observation) -> ActionTypeEnum:
+        evidence_key = ACTION_ENUM_TO_EVIDENCE_KEY.get(action_type)
+        if evidence_key and evidence_key not in observation.revealed_evidence:
+            return action_type
+
+        alternatives = []
+        for alias in self._available_investigation_aliases(observation):
+            candidate = ACTION_ALIAS_TO_ENUM[alias]
+            candidate_key = ACTION_ENUM_TO_EVIDENCE_KEY.get(candidate)
+            if candidate_key and candidate_key not in observation.revealed_evidence:
+                alternatives.append(candidate)
+
+        if alternatives:
+            return alternatives[0]
+
+        raise ValueError(
+            f"Investigation {action_type.value!r} is already revealed and no unseen investigations remain."
+        )
 
     def _map_decision_to_resolution(self, decision: str, confidence: float, observation) -> ResolutionEnum:
         if decision not in {"fraud", "legitimate"}:
