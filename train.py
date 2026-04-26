@@ -13,7 +13,7 @@ import pandas as pd
 from datasets import Dataset, load_dataset
 
 from config import ExperimentConfig
-from environment import FraudShieldTextEnvironment
+from environment import ACTION_TYPE_TO_CANONICAL_ALIAS, FraudShieldTextEnvironment
 from models import ActionTypeEnum, FraudCheckAction
 from utils import ensure_dir, save_json, seed_everything
 
@@ -171,7 +171,7 @@ def build_rollout_dataset(config: ExperimentConfig) -> Dataset:
                 action = agent.decide(text_env)
                 payload = {
                     "action_type": "decide" if action.action_type.value == "resolve_case" else "investigate",
-                    "investigation_target": action.action_type.value,
+                    "investigation_target": ACTION_TYPE_TO_CANONICAL_ALIAS.get(action.action_type),
                     "decision": "fraud" if getattr(action, "resolution", None) and action.resolution.value in {"block", "hold", "escalate"} else "legitimate",
                     "confidence": 0.8,
                     "reasoning": action.reasoning or "Training rollout step.",

@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from environment import ACTION_TYPE_TO_CANONICAL_ALIAS, build_fraudshield_prompt
 from models import ActionTypeEnum, FraudCheckAction, ResolutionEnum, TaskDifficulty
 
 try:  # pragma: no cover - optional in local smoke tests
@@ -95,21 +96,7 @@ class LLMFraudDetectionAgent:
 
     def _build_messages(self, observation) -> list[Dict[str, str]]:
         available_aliases = self._available_investigation_aliases(observation)
-        observation_payload = {
-            "case_id": observation.case_id,
-            "task_name": observation.task_name.value,
-            "current_screen": observation.current_screen.value,
-            "visible_panels": observation.visible_panels,
-            "case_summary": observation.case_summary.model_dump(mode="json"),
-            "revealed_evidence": observation.revealed_evidence,
-            "linked_case_ids": observation.linked_case_ids,
-            "remaining_steps": observation.remaining_steps,
-            "remaining_sla": observation.remaining_sla,
-            "note_required": observation.note_required,
-            "allowed_public_actions": [action.value for action in observation.allowed_actions],
-            "available_investigation_aliases": available_aliases,
-            "app_context": observation.app_context,
-        }
+        prompt = build_fraudshield_prompt(observation)
         system_prompt = (
             "You are a fraud analyst operating inside a simulated investigation workflow. "
             "Only use the visible evidence shown to you. Choose either one investigation alias or one final "
@@ -121,7 +108,7 @@ class LLMFraudDetectionAgent:
         )
         return [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": json.dumps(observation_payload, separators=(",", ":"))},
+            {"role": "user", "content": prompt},
         ]
 
     def _payload_to_action(self, payload: Dict[str, Any], observation) -> FraudCheckAction:
@@ -316,10 +303,7 @@ class LocalModelFraudDetectionAgent(LLMFraudDetectionAgent):
             return self._fallback(observation, exc)
 
     def _build_local_prompt(self, observation) -> str:
-        messages = self._build_messages(observation)
-        if hasattr(self.tokenizer, "apply_chat_template"):
-            return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        return "\n".join(f"{message['role'].upper()}: {message['content']}" for message in messages)
+        return build_fraudshield_prompt(observation) + "\n"
 
     def _load_model(self) -> None:
         try:

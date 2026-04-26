@@ -12,6 +12,14 @@ from models import ActionTypeEnum, FraudCheckAction, ResolutionEnum
 from reward import RewardBreakdown, build_reward_breakdown
 from utils import approximate_token_count, extract_json_object
 
+CANONICAL_INVESTIGATION_ALIASES = [
+    "merchant_profile",
+    "customer_profile",
+    "network_graph",
+    "payment_trace",
+    "policy_review",
+]
+
 INVESTIGATION_ALIAS_TO_ACTION = {
     "merchant_profile": ActionTypeEnum.FETCH_MERCHANT_PROFILE,
     "fetch_merchant_profile": ActionTypeEnum.FETCH_MERCHANT_PROFILE,
@@ -26,6 +34,42 @@ INVESTIGATION_ALIAS_TO_ACTION = {
     "policy_review": ActionTypeEnum.CHECK_POLICY,
     "check_policy": ActionTypeEnum.CHECK_POLICY,
 }
+
+ACTION_TYPE_TO_CANONICAL_ALIAS = {
+    ActionTypeEnum.FETCH_MERCHANT_PROFILE: "merchant_profile",
+    ActionTypeEnum.FETCH_CUSTOMER_PROFILE: "customer_profile",
+    ActionTypeEnum.FETCH_NETWORK_GRAPH: "network_graph",
+    ActionTypeEnum.REVIEW_TRANSACTION: "payment_trace",
+    ActionTypeEnum.CHECK_POLICY: "policy_review",
+}
+
+
+def build_fraudshield_prompt(observation) -> str:
+    """Build the canonical prompt used for both training and inference."""
+
+    payload = {
+        "case_id": observation.case_id,
+        "task_name": observation.task_name.value,
+        "visible_panels": observation.visible_panels,
+        "revealed_evidence": observation.revealed_evidence,
+        "linked_case_ids": observation.linked_case_ids,
+        "remaining_steps": observation.remaining_steps,
+        "remaining_sla": observation.remaining_sla,
+        "note_required": observation.note_required,
+        "allowed_actions": [action.value for action in observation.allowed_actions],
+        "case_summary": observation.case_summary.model_dump(mode="json"),
+        "app_context": observation.app_context,
+    }
+    available = observation.app_context.get("available_investigations", CANONICAL_INVESTIGATION_ALIASES)
+    return (
+        "You are a fraud analyst in a multi-step training environment. "
+        "Return JSON only. Use visible evidence, investigation budget, and prior evidence carefully.\n\n"
+        f"Visible observation:\n{json.dumps(payload, sort_keys=True)}\n\n"
+        f"Valid investigation aliases: {available}\n"
+        "JSON schema: "
+        '{"action_type":"investigate|decide","investigation_target":"alias_or_null",'
+        '"decision":"fraud|legitimate|null","confidence":0.0,"reasoning":"one sentence"}'
+    )
 
 
 @dataclass
@@ -70,33 +114,7 @@ class FraudShieldTextEnvironment:
 
     def build_prompt(self, observation) -> str:
         """Build the prompt shown to an LLM policy."""
-
-        payload = {
-            "case_id": observation.case_id,
-            "task_name": observation.task_name.value,
-            "visible_panels": observation.visible_panels,
-            "revealed_evidence": observation.revealed_evidence,
-            "linked_case_ids": observation.linked_case_ids,
-            "remaining_steps": observation.remaining_steps,
-            "remaining_sla": observation.remaining_sla,
-            "note_required": observation.note_required,
-            "allowed_actions": [action.value for action in observation.allowed_actions],
-            "case_summary": observation.case_summary.model_dump(mode="json"),
-            "app_context": observation.app_context,
-        }
-        available = observation.app_context.get(
-            "available_investigations",
-            ["merchant_profile", "customer_profile", "network_graph", "payment_trace", "policy_review"],
-        )
-        return (
-            "You are a fraud analyst in a multi-step training environment. "
-            "Return JSON only. Use visible evidence, investigation budget, and prior evidence carefully.\n\n"
-            f"Visible observation:\n{json.dumps(payload, sort_keys=True)}\n\n"
-            f"Valid investigation aliases: {available}\n"
-            "JSON schema: "
-            '{"action_type":"investigate|decide","investigation_target":"alias_or_null",'
-            '"decision":"fraud|legitimate|null","confidence":0.0,"reasoning":"one sentence"}'
-        )
+        return build_fraudshield_prompt(observation)
 
     def parse_response(self, response_text: str) -> tuple[FraudCheckAction, dict[str, Any], bool, bool]:
         """Convert model output into a typed environment action."""
