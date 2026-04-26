@@ -129,6 +129,12 @@ def _explorer_html() -> str:
       margin: 0 0 12px;
       font-size: 1rem;
     }
+    .subtle {
+      margin: -6px 0 14px;
+      color: var(--muted);
+      line-height: 1.5;
+      font-size: 0.94rem;
+    }
     .field { margin-bottom: 12px; }
     .field label {
       display: block;
@@ -152,6 +158,35 @@ def _explorer_html() -> str:
       grid-template-columns: 1fr 1fr;
       gap: 10px;
       margin-top: 10px;
+    }
+    .workflow-actions {
+      display: grid;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .workflow-button {
+      width: 100%;
+      text-align: left;
+      background: #fff;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      padding: 12px 14px;
+    }
+    .workflow-button strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 0.95rem;
+    }
+    .workflow-button span {
+      display: block;
+      font-size: 0.84rem;
+      color: var(--muted);
+      font-weight: 500;
+      line-height: 1.45;
+    }
+    .workflow-button.primary {
+      background: var(--accent-soft);
+      border-color: #b8cffb;
     }
     button {
       border: 0;
@@ -224,6 +259,29 @@ def _explorer_html() -> str:
       gap: 12px;
       margin-top: 16px;
     }
+    .how-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-top: 18px;
+    }
+    .how-card {
+      border: 1px solid var(--line);
+      background: #fbfdff;
+      border-radius: 14px;
+      padding: 14px;
+    }
+    .how-card strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 0.92rem;
+    }
+    .how-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.88rem;
+      line-height: 1.5;
+    }
     .trace-item {
       border: 1px solid var(--line);
       border-radius: 14px;
@@ -270,38 +328,52 @@ def _explorer_html() -> str:
     <section class="hero">
       <h1>FraudShield Explorer</h1>
       <p>
-        This is a lightweight browser UI for the OpenEnv environment. It lets you reset a task,
-        reveal hidden evidence step by step, and see how the heuristic baseline investigates before
-        making a final routing decision.
+        FraudShield is a simulated fraud review workflow. You start with a small amount of triage
+        information, choose what evidence to inspect, and then make a final case decision.
       </p>
       <div class="hero-links">
         <a href="/docs" target="_blank" rel="noreferrer">Open API docs</a>
         <a href="/metadata" target="_blank" rel="noreferrer">View metadata JSON</a>
         <a href="/schema" target="_blank" rel="noreferrer">View schema JSON</a>
       </div>
+      <div class="how-grid">
+        <div class="how-card">
+          <strong>1. Pick a task</strong>
+          <p>Easy, medium, and hard tasks reveal different amounts of ambiguity and linked-case complexity.</p>
+        </div>
+        <div class="how-card">
+          <strong>2. Investigate</strong>
+          <p>Use the workflow actions to reveal customer, merchant, network, payment, or policy evidence.</p>
+        </div>
+        <div class="how-card">
+          <strong>3. Decide</strong>
+          <p>Add a note when required, then approve, hold, request documents, block, or escalate.</p>
+        </div>
+      </div>
     </section>
 
     <div class="grid">
       <aside class="panel">
-        <h2>Controls</h2>
+        <h2>Start Here</h2>
+        <p class="subtle">This side panel is your review console. Reset a task, inspect evidence, and take one workflow step at a time.</p>
 
         <div class="field">
-          <label for="task">Task</label>
+          <label for="task">Case Difficulty</label>
           <select id="task">
-            <option value="easy">easy</option>
-            <option value="medium" selected>medium</option>
-            <option value="hard">hard</option>
+            <option value="easy">Easy: obvious case</option>
+            <option value="medium" selected>Medium: mixed signals</option>
+            <option value="hard">Hard: linked cases</option>
           </select>
         </div>
 
         <div class="actions">
-          <button id="resetBtn">Reset Episode</button>
-          <button id="stateBtn" class="secondary">Refresh State</button>
-          <button id="traceBtn" class="secondary">Run Heuristic Walkthrough</button>
+          <button id="resetBtn">Start New Episode</button>
+          <button id="stateBtn" class="secondary">Refresh Details</button>
+          <button id="traceBtn" class="secondary">Watch Baseline Walkthrough</button>
         </div>
 
         <div class="field" style="margin-top:18px;">
-          <label for="reasoning">Reasoning</label>
+          <label for="reasoning">Why This Step?</label>
           <textarea id="reasoning">Review the visible evidence before taking the next action.</textarea>
         </div>
 
@@ -311,36 +383,59 @@ def _explorer_html() -> str:
         </div>
 
         <div class="field">
-          <label for="resolution">Resolution</label>
+          <label for="resolution">Final Decision</label>
           <select id="resolution">
-            <option value="approve">approve</option>
-            <option value="block" selected>block</option>
-            <option value="hold">hold</option>
-            <option value="request_docs">request_docs</option>
-            <option value="escalate">escalate</option>
+            <option value="approve">Approve</option>
+            <option value="block" selected>Block</option>
+            <option value="hold">Hold</option>
+            <option value="request_docs">Request documents</option>
+            <option value="escalate">Escalate</option>
           </select>
         </div>
 
-        <h3 style="margin-top:18px;">Action Buttons</h3>
-        <div class="actions">
-          <button data-action="review_transaction">review_transaction</button>
-          <button data-action="fetch_customer_profile">fetch_customer_profile</button>
-          <button data-action="fetch_merchant_profile">fetch_merchant_profile</button>
-          <button data-action="fetch_network_graph">fetch_network_graph</button>
-          <button data-action="check_policy">check_policy</button>
-          <button data-action="add_case_note">add_case_note</button>
-          <button data-action="resolve_case">resolve_case</button>
+        <h3 style="margin-top:18px;">Workflow Actions</h3>
+        <p class="subtle">Start with the transaction review, then inspect only the evidence you need before making a final decision.</p>
+        <div class="workflow-actions">
+          <button class="workflow-button primary" data-action="review_transaction">
+            <strong>Open Transaction</strong>
+            <span>Reveal payment and fulfillment details for the active case.</span>
+          </button>
+          <button class="workflow-button" data-action="fetch_customer_profile">
+            <strong>Check Customer History</strong>
+            <span>Reveal buyer age, disputes, and repeat-buyer signals.</span>
+          </button>
+          <button class="workflow-button" data-action="fetch_merchant_profile">
+            <strong>Review Merchant Signals</strong>
+            <span>Reveal seller age, rating, reviews, and chargeback history.</span>
+          </button>
+          <button class="workflow-button" data-action="fetch_network_graph">
+            <strong>Review Linked Activity</strong>
+            <span>Reveal device, cluster, linked-card, and related-case risk.</span>
+          </button>
+          <button class="workflow-button" data-action="check_policy">
+            <strong>Check Policy</strong>
+            <span>Reveal workflow guidance before the final routing decision.</span>
+          </button>
+          <button class="workflow-button" data-action="add_case_note">
+            <strong>Add Case Note</strong>
+            <span>Document what you found before closing the case.</span>
+          </button>
+          <button class="workflow-button" data-action="resolve_case">
+            <strong>Finalize Decision</strong>
+            <span>Submit the final routing action for the active case.</span>
+          </button>
         </div>
 
         <div id="status" class="status">Reset a task to begin exploring the environment.</div>
       </aside>
 
       <main class="panel">
-        <h2>Current Observation</h2>
+        <h2>Current Case View</h2>
+        <p class="subtle">Everything below is what the model or analyst can currently see. Hidden evidence appears only after the matching investigation step.</p>
         <div id="overview" class="cards"></div>
 
         <div class="panel" style="box-shadow:none; padding:0; border:0; background:transparent;">
-          <h3>Visible Workflow Hints</h3>
+          <h3>Visible Hints</h3>
           <div id="hints" class="chips"></div>
         </div>
 
@@ -356,8 +451,8 @@ def _explorer_html() -> str:
 
         <div class="panel" style="box-shadow:none; padding:0; border:0; background:transparent;">
           <div class="inline">
-            <h3 style="margin:0;">Heuristic Walkthrough</h3>
-            <span class="muted">Useful before RL training so you can see the current baseline behavior.</span>
+            <h3 style="margin:0;">Baseline Walkthrough</h3>
+            <span class="muted">A plain reference flow that shows how the current rule-based baseline handles the same task.</span>
           </div>
           <div id="trace" class="trace-list"></div>
         </div>
@@ -374,6 +469,15 @@ def _explorer_html() -> str:
     const evidenceEl = document.getElementById("evidence");
     const stateEl = document.getElementById("state");
     const traceEl = document.getElementById("trace");
+    const actionLabels = {
+      review_transaction: "Open Transaction",
+      fetch_customer_profile: "Check Customer History",
+      fetch_merchant_profile: "Review Merchant Signals",
+      fetch_network_graph: "Review Linked Activity",
+      check_policy: "Check Policy",
+      add_case_note: "Add Case Note",
+      resolve_case: "Finalize Decision",
+    };
 
     function setStatus(message, kind = "neutral") {
       statusEl.textContent = message;
@@ -422,9 +526,9 @@ def _explorer_html() -> str:
       `).join("");
 
       const hints = [
-        "queue_reason: " + observation.case_summary.queue_reason,
-        ...observation.visible_panels.map((item) => "panel: " + item),
-        ...observation.allowed_actions.map((item) => "allowed: " + item),
+        "Triage summary: " + observation.case_summary.queue_reason,
+        ...observation.visible_panels.map((item) => "Visible panel: " + item),
+        ...observation.allowed_actions.map((item) => "Available action: " + (actionLabels[item] || item)),
       ];
       hintsEl.innerHTML = hints.map((hint) => `<span class="chip">${hint}</span>`).join("");
       evidenceEl.textContent = pretty(observation.revealed_evidence || {});
@@ -440,7 +544,7 @@ def _explorer_html() -> str:
 
     async function resetEpisode() {
       const task = document.getElementById("task").value;
-      setStatus("Resetting " + task + " episode...", "neutral");
+      setStatus("Starting a new " + task + " review episode...", "neutral");
       const response = await fetch("/reset?task=" + encodeURIComponent(task), { method: "POST" });
       const data = await response.json();
       if (!response.ok) {
@@ -450,7 +554,7 @@ def _explorer_html() -> str:
       renderObservation(data.observation);
       await fetchState();
       traceEl.innerHTML = "";
-      setStatus("Episode ready. Start with review_transaction to reveal the transaction trace.", "success");
+      setStatus("Episode ready. Start with Open Transaction to reveal the first operational evidence.", "success");
     }
 
     async function step(actionType) {
@@ -472,7 +576,7 @@ def _explorer_html() -> str:
         payload.resolution = document.getElementById("resolution").value;
       }
 
-      setStatus("Submitting " + actionType + "...", "neutral");
+      setStatus("Running " + (actionLabels[actionType] || actionType) + "...", "neutral");
       const response = await fetch("/step", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -488,7 +592,7 @@ def _explorer_html() -> str:
       const reward = data.reward;
       const doneSuffix = data.done ? " Episode finished." : "";
       setStatus(
-        `${actionType} -> reward ${reward.value}. ${reward.reason}${doneSuffix}`,
+        `${actionLabels[actionType] || actionType} -> reward ${reward.value}. ${reward.reason}${doneSuffix}`,
         data.done ? "success" : "neutral"
       );
     }
@@ -502,7 +606,7 @@ def _explorer_html() -> str:
 
     async function runTrace() {
       const task = document.getElementById("task").value;
-      setStatus("Running heuristic walkthrough for " + task + "...", "neutral");
+      setStatus("Running baseline walkthrough for " + task + "...", "neutral");
       const response = await fetch("/demo/trace?task=" + encodeURIComponent(task));
       const data = await response.json();
       if (!response.ok) {
@@ -512,7 +616,7 @@ def _explorer_html() -> str:
 
       const cards = data.action_trace.map((item) => `
         <div class="trace-item">
-          <h4>Step ${item.step}: ${item.action.action_type} on ${item.action.case_id}</h4>
+          <h4>Step ${item.step}: ${actionLabels[item.action.action_type] || item.action.action_type} on ${item.action.case_id}</h4>
           <p><strong>Reasoning:</strong> ${item.action.reasoning || "(no reasoning text)"}</p>
           <p><strong>Reward:</strong> ${item.reward.value} | <strong>Why:</strong> ${item.reward.reason}</p>
           ${item.action.resolution ? `<p><strong>Resolution:</strong> ${item.action.resolution}</p>` : ""}
@@ -520,7 +624,7 @@ def _explorer_html() -> str:
         </div>
       `).join("");
       traceEl.innerHTML = cards || '<div class="trace-item"><p>No trace steps returned.</p></div>';
-      setStatus("Heuristic walkthrough finished. You can compare this flow with your later RL-trained policy.", "success");
+      setStatus("Baseline walkthrough finished. You can compare this flow with your trained policy later.", "success");
     }
 
     document.getElementById("resetBtn").addEventListener("click", resetEpisode);
