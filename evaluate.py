@@ -118,6 +118,23 @@ def save_evaluation_artifacts(report: dict[str, Any], config: ExperimentConfig) 
     plt.close()
 
     save_json(report, Path(config.training.output_dir) / "evaluation_report.json")
+    save_json(
+        {
+            "status": "completed",
+            "trainer": config.training.algorithm,
+            "baseline": report["baseline"],
+            "trained": report["trained"],
+            "task_comparison": report["comparison"],
+            "score_delta": report["preference_score"],
+            "success_rate": report["success_rate"],
+            "artifact_urls": {
+                "before_after_plot": str(plots_dir / "before_after_scores.png"),
+                "reward_plot": str(plots_dir / "evaluation_rewards.png"),
+                "comparison_table": str(Path(config.training.output_dir) / "evaluation_report.json"),
+            },
+        },
+        Path("artifacts") / "training_summary.json",
+    )
 
 
 def main() -> None:

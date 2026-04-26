@@ -18,7 +18,7 @@
     "mixed_precision": "auto"
   },
   "training": {
-    "algorithm": "grpo",
+    "algorithm": "two_stage_sft_curriculum",
     "warmstart_algorithm": "sft",
     "output_dir": "artifacts/rl_runs/colab_qlora_grpo",
     "checkpoint_dir": "artifacts/rl_runs/colab_qlora_grpo/checkpoints",
